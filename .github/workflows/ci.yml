@@ -1,0 +1,75 @@
+# Runs on every pull request and on main.
+#
+# The point of this file: nobody has to read a diff to know whether it is safe
+# to merge. If this is green, the 119 tests pass, the types check, the proof of
+# concept still works end to end, and the dashboard still builds. If it is red,
+# the pull request is not ready — whatever the description says.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# A second push to the same branch cancels the first run rather than queueing
+# behind it — the older result is no longer interesting.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Tests, types, proof of concept, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      # The web build must not reach for a real database. Every dashboard page
+      # is force-dynamic so nothing connects at build time, but a value is set
+      # here so a future page that does connect fails loudly in CI rather than
+      # silently falling back to the demo database.
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        # Integration tests run against real Postgres 17 via PGlite, so no
+        # database service container is needed here.
+        run: npm test
+
+      - name: Proof of concept
+        # Exits non-zero if any of the seven steps in the brief stops working.
+        run: npm run poc
+
+      - name: Build admin dashboard
+        run: npm run build --workspace @skelclock/web
+
+      - name: Check for committed secrets
+        # Cheap backstop on a public repo: an .env or a pasted key should never
+        # reach main, whoever opened the pull request.
+        run: |
+          if git ls-files | grep -E '(^|/)\.env$'; then
+            echo "::error::A .env file is committed. Remove it and rotate anything in it."
+            exit 1
+          fi
+          if git grep -nE 'eyJ[A-Za-z0-9_-]{30,}|gho_[A-Za-z0-9]{30,}|sk-[A-Za-z0-9]{30,}' \
+               -- ':!package-lock.json' ; then
+            echo "::error::Something that looks like a token or key is committed."
+            exit 1
+          fi
+          echo "No secrets found."

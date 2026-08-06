@@ -1,0 +1,20 @@
+# Who gets asked to review what.
+#
+# GitHub requests these people automatically when a pull request touches a
+# matching path. Combined with the branch protection on main, it means nothing
+# reaches the main codebase without the owner of that area seeing it.
+
+# Default: Jack reviews everything.
+*                       @jpwhite030
+
+# The parts where a mistake is expensive and quiet, so they always want a
+# second look regardless of who else has reviewed:
+#
+#   migrations   — a bad migration is hard to undo once it is on production data
+#   integrity    — the triggers that make attendance append-only
+#   odoo         — anything here writes to the system payroll runs from
+#   sync         — the retry logic; a bug means shifts silently miss payroll
+/supabase/migrations/   @jpwhite030
+/packages/odoo/         @jpwhite030
+/packages/server/src/sync.ts      @jpwhite030
+/packages/server/src/approval.ts  @jpwhite030
