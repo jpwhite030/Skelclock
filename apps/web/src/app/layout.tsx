@@ -12,6 +12,7 @@ const TABS = [
   { href: '/', label: 'Working now' },
   { href: '/timesheets', label: 'Timesheets' },
   { href: '/exceptions', label: 'Exceptions' },
+  { href: '/sites', label: 'Sites' },
   { href: '/sync', label: 'Odoo sync' },
 ] as const;
 
