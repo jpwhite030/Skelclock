@@ -2,7 +2,7 @@
  * Screenshots the dashboard, so a design change can be looked at rather than
  * only compiled.
  *
- *   npm run shots            capture all four screens at desktop and laptop
+ *   npm run shots            capture all screens at desktop and laptop
  *   npm run shots -- before  write them into a named folder for comparison
  *
  * Uses the Chromium that Playwright has already installed on this machine, via
@@ -23,6 +23,7 @@ const PAGES = [
   { path: '/', name: 'working-now' },
   { path: '/timesheets', name: 'timesheets' },
   { path: '/exceptions', name: 'exceptions' },
+  { path: '/sites', name: 'sites' },
   { path: '/sync', name: 'odoo-sync' },
 ] as const;
 
@@ -44,6 +45,8 @@ async function chromiumPath(): Promise<string | undefined> {
     process.env.PLAYWRIGHT_BROWSERS_PATH ??
     join(process.env.LOCALAPPDATA ?? '', 'ms-playwright');
 
+  const { access } = await import('node:fs/promises');
+
   try {
     const dirs = await readdir(root);
     const full = dirs.filter((d) => /^chromium-\d+$/.test(d)).sort().reverse();
@@ -55,7 +58,6 @@ async function chromiumPath(): Promise<string | undefined> {
         join(root, dir, 'chrome-win', 'headless_shell.exe'),
       ]) {
         try {
-          const { access } = await import('node:fs/promises');
           await access(exe);
           return exe;
         } catch {
@@ -72,7 +74,6 @@ async function chromiumPath(): Promise<string | undefined> {
     'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
   ]) {
     try {
-      const { access } = await import('node:fs/promises');
       await access(exe);
       return exe;
     } catch {
