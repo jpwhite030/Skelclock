@@ -7,4 +7,5 @@ build/
 .next/
 *.tsbuildinfo
 .pgdata/
+.shots/
 .DS_Store

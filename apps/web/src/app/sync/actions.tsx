@@ -7,17 +7,25 @@ import { retryOne, runAll } from './server-actions';
 /**
  * Retry one failed push.
  *
- * Reports the outcome inline rather than as a toast — someone working through
- * a list of failures needs to see which row succeeded, next to that row.
+ * A text action, not a boxed button. The busy state changes three things at
+ * once — label, colour, and the bottom rule going dashed — so it is legible
+ * without relying on colour.
+ *
+ * There is no disclosure here: the error is already on screen in the
+ * always-open console sub-row directly beneath the row, which this button is
+ * `aria-describedby`-linked to.
  */
 export function RetryButton({ jobId }: { jobId: string }) {
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   return (
-    <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+    <>
       <button
+        className="act"
+        data-busy={pending ? '' : undefined}
         disabled={pending}
+        aria-describedby={`err-${jobId}`}
         onClick={() => {
           setResult(null);
           startTransition(async () => {
@@ -25,12 +33,15 @@ export function RetryButton({ jobId }: { jobId: string }) {
           });
         }}
       >
-        {pending ? 'Retrying…' : 'Retry'}
+        {pending ? 'Pushing…' : 'Retry'}
       </button>
-      {result && (
-        <span className={`pill ${result.ok ? 'ok' : 'error'}`}>{result.message}</span>
-      )}
-    </span>
+
+      {/* Announced, not drawn — the row's own status mark is the visible
+          outcome once the server action revalidates. */}
+      <p role="status" aria-live="polite" className="sr-only">
+        {result?.message ?? ''}
+      </p>
+    </>
   );
 }
 
@@ -40,9 +51,10 @@ export function RunAllButton() {
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   return (
-    <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+    <span style={{ display: 'inline-flex', gap: 'var(--r-4)', alignItems: 'baseline' }}>
       <button
-        className="primary"
+        className="act"
+        data-busy={pending ? '' : undefined}
         disabled={pending}
         onClick={() => {
           setResult(null);
@@ -51,10 +63,15 @@ export function RunAllButton() {
           });
         }}
       >
-        {pending ? 'Syncing…' : 'Sync now'}
+        {pending ? 'Pushing…' : 'Run all'}
       </button>
       {result && (
-        <span className={`pill ${result.ok ? 'ok' : 'error'}`}>{result.message}</span>
+        <span
+          className="lbl"
+          style={{ color: result.ok ? 'var(--cad-green)' : 'var(--cad-magenta)' }}
+        >
+          {result.message}
+        </span>
       )}
     </span>
   );
