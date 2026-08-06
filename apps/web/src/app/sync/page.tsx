@@ -69,7 +69,7 @@ export default async function SyncPage({
 
       <div className="sht">
         <h1 className="dsp">Odoo sync</h1>
-        <span className="lbl no">SHT 04 / Transmittal</span>
+        <span className="lbl no">SHT 05 / Transmittal</span>
       </div>
 
       <form className="spec" method="get">

@@ -6,7 +6,7 @@
  * have been on, whether anything is waiting to sync, and one very large button.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { AttendanceEventType } from '@skelclock/core';
 
+import type { PendingSuggestionDto } from '../src/api';
 import { useClock, type PressOptions } from '../src/useClock';
 import { supabase, signOut } from '../src/supabase';
 import { colors, radius, spacing, type, MIN_TAP } from '../src/theme';
@@ -36,10 +37,71 @@ export default function ClockScreen() {
     });
   }, []);
 
-  const { state, press, refresh, sync, checkGeofence, dismissBanner } = useClock(employeeId);
+  const {
+    state,
+    press,
+    refresh,
+    sync,
+    checkGeofence,
+    dismissBanner,
+    toggleAutoDetect,
+    confirmSuggestion,
+    dismissSuggestion,
+  } = useClock(employeeId);
   const [busy, setBusy] = useState(false);
+  const shownSuggestionIds = useRef(new Set<string>());
 
   const jobId = state.home?.currentJobId ?? state.home?.assignedJob?.id ?? null;
+
+  // Surface each newly-seen suggestion once, with Confirm/Dismiss - the same
+  // Alert pattern already used for the outside-geofence confirmation below.
+  useEffect(() => {
+    const next = state.suggestions.find((s) => !shownSuggestionIds.current.has(s.id));
+    if (!next) return;
+    shownSuggestionIds.current.add(next.id);
+    promptSuggestion(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.suggestions]);
+
+  const promptSuggestion = useCallback(
+    (suggestion: PendingSuggestionDto) => {
+      const action = suggestion.eventType === 'clock_in' ? 'clocking in' : 'clocking out';
+      Alert.alert(
+        'Confirm your clock',
+        `Looks like you ${suggestion.eventType === 'clock_in' ? 'arrived at' : 'left'} ${
+          suggestion.siteName ?? 'a job site'
+        } at ${formatTime(suggestion.deviceTime)}. Confirm you were ${action}?`,
+        [
+          {
+            text: "That wasn't me",
+            style: 'destructive',
+            onPress: () => void dismissSuggestion(suggestion.id, 'Worker said this was not them'),
+          },
+          {
+            text: 'Confirm',
+            onPress: () => void confirmSuggestion(suggestion.id),
+          },
+        ],
+      );
+    },
+    [confirmSuggestion, dismissSuggestion],
+  );
+
+  const onToggleAutoDetect = useCallback(
+    async (next: boolean) => {
+      try {
+        await toggleAutoDetect(next);
+      } catch (err) {
+        Alert.alert(
+          "Couldn't turn that on",
+          err instanceof Error
+            ? err.message
+            : 'Location permission is needed for auto-detect to work.',
+        );
+      }
+    },
+    [toggleAutoDetect],
+  );
 
   /**
    * Runs a clock event, asking for a reason first if the worker is outside the
@@ -268,10 +330,33 @@ export default function ClockScreen() {
       )}
 
       <View style={styles.card}>
+        <View style={styles.autoDetectRow}>
+          <View style={styles.autoDetectText}>
+            <Text style={styles.label}>AUTO-DETECT ARRIVAL</Text>
+            <Text style={styles.muted}>
+              Suggest a clock-in/out when your phone notices you've arrived at or left a job
+              site — even if SkelClock isn't open. Every suggestion needs your confirmation
+              before it counts.
+            </Text>
+          </View>
+          <Pressable
+            accessibilityRole="switch"
+            accessibilityState={{ checked: state.autoDetectEnabled }}
+            onPress={() => void onToggleAutoDetect(!state.autoDetectEnabled)}
+            style={[styles.toggle, state.autoDetectEnabled && styles.toggleOn]}
+          >
+            <View style={[styles.toggleKnob, state.autoDetectEnabled && styles.toggleKnobOn]} />
+          </Pressable>
+        </View>
+      </View>
+
+      <View style={styles.card}>
         <Text style={styles.label}>PRIVACY</Text>
         <Text style={styles.muted}>
-          Your location is recorded only when you clock on and clock off. SkelClock does not
-          track you at any other time, and stops entirely once you clock off.
+          Your location is recorded when you clock on and clock off. If you turn on auto-detect
+          above, SkelClock also checks your location in the background to suggest a clock event
+          near a job site — you can turn it off any time, and it never clocks you on or off by
+          itself without you confirming.
         </Text>
       </View>
 
@@ -475,4 +560,26 @@ const styles = StyleSheet.create({
 
   signOut: { minHeight: MIN_TAP, alignItems: 'center', justifyContent: 'center' },
   signOutText: { ...type.body, color: colors.textMuted },
+
+  autoDetectRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  autoDetectText: { flex: 1, gap: spacing.xs },
+  toggle: {
+    width: 56,
+    height: MIN_TAP * 0.6,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceRaised,
+    borderWidth: 1,
+    borderColor: colors.border,
+    justifyContent: 'center',
+    padding: 3,
+  },
+  toggleOn: { backgroundColor: colors.on, borderColor: colors.on },
+  toggleKnob: {
+    width: 26,
+    height: 26,
+    borderRadius: radius.pill,
+    backgroundColor: colors.text,
+    alignSelf: 'flex-start',
+  },
+  toggleKnobOn: { alignSelf: 'flex-end' },
 });

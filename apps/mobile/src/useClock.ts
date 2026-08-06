@@ -26,9 +26,20 @@ import {
   type ClockState,
 } from '@skelclock/core';
 
-import { ApiClient, type ActivityOption, type JobOption, type WorkerHomeDto } from './api';
+import {
+  ApiClient,
+  type ActivityOption,
+  type JobOption,
+  type PendingSuggestionDto,
+  type WorkerHomeDto,
+} from './api';
 import { captureFix, describeProblem, type Fix } from './location';
 import { deviceId } from './device';
+import {
+  isAutoDetectEnabled,
+  refreshWatchedJobsIfEnabled,
+  setAutoDetectEnabled,
+} from './geofence';
 import { EventQueue, type QueuedEvent } from './queue';
 import { SqliteQueueStore } from './sqlite-store';
 import { accessToken } from './supabase';
@@ -45,6 +56,10 @@ export interface ClockScreenState {
   online: boolean;
   syncing: boolean;
   banner: { tone: 'info' | 'warn' | 'error'; text: string } | null;
+  /** Phase 3: worker opt-in for background geofence auto-detect. Off by default. */
+  autoDetectEnabled: boolean;
+  /** Geofence-raised events waiting on this worker to confirm or dismiss. */
+  suggestions: PendingSuggestionDto[];
 }
 
 export interface PressOptions {
@@ -73,6 +88,8 @@ export function useClock(employeeId: string | null) {
     online: true,
     syncing: false,
     banner: null,
+    autoDetectEnabled: false,
+    suggestions: [],
   });
 
   const queueRef = useRef<EventQueue | null>(null);
@@ -96,6 +113,9 @@ export function useClock(employeeId: string | null) {
       if (cancelled) return;
       storeRef.current = store;
       queueRef.current = new EventQueue(store, apiRef.current);
+
+      const autoDetectEnabled = await isAutoDetectEnabled();
+      if (!cancelled) setState((s) => ({ ...s, autoDetectEnabled }));
 
       await refresh();
       await sync();
@@ -148,11 +168,19 @@ export function useClock(employeeId: string | null) {
 
     try {
       const workDate = localDate(new Date());
-      const [home, jobs, activities] = await Promise.all([
+      const [home, jobs, activities, suggestions] = await Promise.all([
         apiRef.current.home(workDate),
         apiRef.current.jobs(),
         apiRef.current.activities(),
+        // A worker who has never opted into auto-detect will just always get
+        // an empty list back here - cheap enough not to bother gating on it.
+        apiRef.current.pendingSuggestions().catch(() => []),
       ]);
+
+      // Re-registers geofences against today's assignments; a no-op unless
+      // the worker has opted in. Fire-and-forget: a permission hiccup here
+      // must never break the clock screen itself.
+      void refreshWatchedJobsIfEnabled(jobs).catch(() => undefined);
 
       setState((s) => ({
         ...s,
@@ -161,6 +189,7 @@ export function useClock(employeeId: string | null) {
         jobs,
         activities,
         pending,
+        suggestions,
         // The server's view, then anything queued locally on top of it — that
         // is what keeps the buttons right for a worker who clocked on with no
         // reception and has not synced yet.
@@ -315,11 +344,51 @@ export function useClock(employeeId: string | null) {
     [employeeId, state.clockState, state.home, state.online, sync],
   );
 
+  /**
+   * Flips the worker's auto-detect opt-in. Throws (via setAutoDetectEnabled)
+   * if location permission is refused - the caller is expected to show that
+   * to the worker, same as any other permission-denied path.
+   */
+  const toggleAutoDetect = useCallback(
+    async (enabled: boolean): Promise<void> => {
+      await setAutoDetectEnabled(enabled, state.jobs);
+      setState((s) => ({ ...s, autoDetectEnabled: enabled }));
+    },
+    [state.jobs],
+  );
+
+  const confirmSuggestion = useCallback(async (suggestionId: string): Promise<void> => {
+    await apiRef.current.confirmSuggestion(suggestionId);
+    setState((s) => ({ ...s, suggestions: s.suggestions.filter((sg) => sg.id !== suggestionId) }));
+    await refresh();
+  }, [refresh]);
+
+  const dismissSuggestion = useCallback(
+    async (suggestionId: string, reason: string): Promise<void> => {
+      await apiRef.current.dismissSuggestion(suggestionId, reason);
+      setState((s) => ({
+        ...s,
+        suggestions: s.suggestions.filter((sg) => sg.id !== suggestionId),
+      }));
+    },
+    [],
+  );
+
   const dismissBanner = useCallback(() => {
     setState((s) => ({ ...s, banner: null }));
   }, []);
 
-  return { state, press, refresh, sync, checkGeofence, dismissBanner };
+  return {
+    state,
+    press,
+    refresh,
+    sync,
+    checkGeofence,
+    dismissBanner,
+    toggleAutoDetect,
+    confirmSuggestion,
+    dismissSuggestion,
+  };
 }
 
 // --- helpers ----------------------------------------------------------------

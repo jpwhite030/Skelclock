@@ -749,7 +749,98 @@ main.paper {
 .minimap i[data-sev="2"] { width: 8px;  background: var(--cad-yellow); }
 
 /* ============================================================================
-   SHT 04 — ODOO SYNC
+   SHT 04 — SITE GEOFENCES (setout)
+
+   The only screen with a live map. Its distinct arrangement is a fixed-width
+   register beside a full-height plan — no table, no stat strip, no diagram
+   drawn from data.
+   ========================================================================= */
+
+.setout-counts {
+  display: flex; align-items: baseline; gap: var(--r-2);
+  padding: var(--r-2) 0;
+}
+
+.sites-layout {
+  display: grid;
+  grid-template-columns: var(--bay-3050) 1fr;
+  gap: var(--r-2);
+  height: calc(100vh - 320px);
+  min-height: 420px;
+  border-top: 1px solid var(--line-strong);
+}
+
+.sites-list { overflow-y: auto; border-right: 1px solid var(--line); }
+
+.site-row {
+  padding: var(--r-4) var(--r-2) var(--r-4) 0;
+  border-bottom: 1px solid var(--rule-steel);
+  display: flex; flex-direction: column; gap: var(--r-8);
+}
+.site-row:last-child { border-bottom: none; }
+/* In hand — moved but not saved. Same 3px edge the tables use for a hold. */
+.site-row[data-hold] { box-shadow: inset 3px 0 0 var(--cad-yellow); padding-left: var(--r-4); }
+
+.site-row-header { display: flex; align-items: center; gap: var(--r-8); flex-wrap: wrap; }
+.site-row-name {
+  font: 500 13px/1.2 var(--font-mono); letter-spacing: .06em; color: var(--bone);
+}
+.site-row-meta {
+  font: 400 11px/1.4 var(--font-mono); letter-spacing: .04em; color: var(--faint);
+}
+
+.site-row-controls { display: flex; align-items: flex-end; gap: var(--r-4); }
+.site-row-controls label {
+  display: flex; flex-direction: column; gap: var(--r-8); color: var(--muted);
+}
+.site-row-controls input {
+  width: 72px; appearance: none;
+  background: transparent; color: var(--bone);
+  border: 1px solid transparent; border-bottom-color: var(--muted);
+  font: 500 13px var(--font-mono); letter-spacing: .06em;
+  padding: 3px 4px;
+}
+.site-row-controls input:hover { border-bottom-color: var(--bone); }
+.site-row-controls input:focus-visible { border-color: var(--cad-yellow); }
+
+.sites-map-panel { overflow: hidden; border-left: 1px solid var(--line); }
+
+/* Leaflet's own CSS assumes it is loaded before the map paints; make sure
+   panes always have the size the container gives them. */
+.leaflet-container {
+  height: 100%; width: 100%; background: var(--canvas-100);
+  font-family: var(--font-mono);
+}
+/* Stock OSM tiles are a bright white sheet in the middle of a dark drawing.
+   Desaturating before inverting gives a monochrome plan; hue-rotating instead
+   left the land green and the water teal, which read as a different app.
+   Pins and fences draw above this pane and are unaffected. */
+.leaflet-tile-pane {
+  filter: grayscale(1) invert(1) brightness(.82) contrast(1.05);
+}
+.leaflet-container .leaflet-control-attribution {
+  background: rgba(15,14,12,.75); color: var(--faint);
+  font: 400 10px/1.4 var(--font-mono);
+}
+.leaflet-container .leaflet-control-attribution a { color: var(--steel-lit); }
+
+/* Leaflet ships its own control styling, so these need the container prefix
+   to win — without it the zoom buttons stay stock white on a dark plan. */
+.leaflet-container .leaflet-bar { border: 1px solid var(--line-strong); box-shadow: none; }
+.leaflet-container .leaflet-bar a,
+.leaflet-container .leaflet-bar a:hover {
+  background: var(--canvas-200); color: var(--bone);
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-mono);
+}
+.leaflet-container .leaflet-bar a:hover { background: var(--canvas-100); }
+.leaflet-container .leaflet-bar a.leaflet-disabled {
+  background: var(--canvas); color: var(--faintest);
+}
+.site-pin { background: none; border: 0; }
+
+/* ============================================================================
+   SHT 05 — ODOO SYNC
    ========================================================================= */
 
 /* Runs under the rail, edge to edge. Negative margins, not 100vw — 100vw

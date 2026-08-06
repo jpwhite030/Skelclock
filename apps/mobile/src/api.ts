@@ -71,6 +71,15 @@ export interface ActivityOption {
   isTravel: boolean;
 }
 
+/** A geofence-raised clock event awaiting the worker's confirmation. */
+export interface PendingSuggestionDto {
+  id: string;
+  eventType: 'clock_in' | 'clock_out';
+  jobId: string | null;
+  siteName: string | null;
+  deviceTime: string;
+}
+
 export class ApiClient implements Transport {
   constructor(private readonly getToken: () => Promise<string | null>) {}
 
@@ -166,6 +175,24 @@ export class ApiClient implements Transport {
   confirmTimesheet(timesheetId: string): Promise<{ status: string }> {
     return this.request<{ status: string }>(`/api/timesheets/${timesheetId}/confirm`, {
       method: 'POST',
+    });
+  }
+
+  /** Geofence-raised events waiting on this worker to confirm or dismiss. */
+  pendingSuggestions(): Promise<PendingSuggestionDto[]> {
+    return this.request<PendingSuggestionDto[]>('/api/events/suggested');
+  }
+
+  confirmSuggestion(eventId: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>(`/api/events/${eventId}/confirm`, {
+      method: 'POST',
+    });
+  }
+
+  dismissSuggestion(eventId: string, reason: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>(`/api/events/${eventId}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
     });
   }
 }
