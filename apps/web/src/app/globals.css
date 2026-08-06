@@ -1,0 +1,206 @@
+/*
+ * Office dashboard styling.
+ *
+ * Written as plain CSS with custom properties rather than a utility framework:
+ * this is four table-shaped screens, and a build-time CSS pipeline would be
+ * more machinery than the problem needs. Light theme by default because the
+ * office runs under fluorescent lights, with a dark variant for anyone whose
+ * system asks for it.
+ */
+
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --border: #dfe3e8;
+  --text: #17202a;
+  --text-muted: #647085;
+
+  --accent: #1d4ed8;
+  --ok: #15803d;
+  --ok-bg: #dcfce7;
+  --warn: #b45309;
+  --warn-bg: #fef3c7;
+  --error: #b91c1c;
+  --error-bg: #fee2e2;
+  --info-bg: #e0e7ff;
+
+  --radius: 10px;
+  --shadow: 0 1px 2px rgb(23 32 42 / 6%), 0 4px 12px rgb(23 32 42 / 4%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12161c;
+    --surface: #1b212a;
+    --border: #2e3846;
+    --text: #f2f5f8;
+    --text-muted: #9aa7b6;
+
+    --accent: #60a5fa;
+    --ok: #4ade80;
+    --ok-bg: #14361f;
+    --warn: #fbbf24;
+    --warn-bg: #3d2c07;
+    --error: #f87171;
+    --error-bg: #3f1616;
+    --info-bg: #1e2a4a;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--accent); }
+
+.shell { display: flex; min-height: 100vh; flex-direction: column; }
+
+header.topbar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 0 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  flex-wrap: wrap;
+}
+
+.brand { font-weight: 700; font-size: 18px; padding: 14px 0; letter-spacing: -0.2px; }
+
+nav.tabs { display: flex; gap: 4px; overflow-x: auto; }
+
+nav.tabs a {
+  padding: 14px 12px;
+  text-decoration: none;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+nav.tabs a:hover { color: var(--text); }
+nav.tabs a[aria-current="page"] { color: var(--text); border-bottom-color: var(--accent); }
+
+main { padding: 24px 20px 64px; max-width: 1400px; width: 100%; margin: 0 auto; }
+
+h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.3px; }
+.subtitle { color: var(--text-muted); margin: 0 0 20px; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 24px; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  box-shadow: var(--shadow);
+}
+
+.card .value { font-size: 28px; font-weight: 700; line-height: 1.1; }
+.card .label { color: var(--text-muted); font-size: 13px; margin-top: 4px; }
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+/* Tables scroll inside their panel; the page itself never scrolls sideways. */
+.table-wrap { overflow-x: auto; }
+
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+
+th {
+  text-align: left;
+  font-size: 12px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  background: var(--surface);
+}
+
+td { padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+
+.mono { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+.muted { color: var(--text-muted); }
+.nowrap { white-space: nowrap; }
+
+.pill {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pill.ok { background: var(--ok-bg); color: var(--ok); }
+.pill.warn { background: var(--warn-bg); color: var(--warn); }
+.pill.error { background: var(--error-bg); color: var(--error); }
+.pill.info { background: var(--info-bg); color: var(--accent); }
+.pill.neutral { background: color-mix(in srgb, var(--text-muted) 15%, transparent); color: var(--text-muted); }
+
+.empty { padding: 48px 20px; text-align: center; color: var(--text-muted); }
+
+form.filters {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  margin-bottom: 16px;
+}
+
+form.filters label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--text-muted); }
+
+input, select, button {
+  font: inherit;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  min-height: 38px;
+}
+
+button { cursor: pointer; font-weight: 500; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover { filter: brightness(1.08); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+details.error-detail summary { cursor: pointer; color: var(--error); }
+details.error-detail pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  background: var(--bg);
+  padding: 10px;
+  border-radius: 8px;
+  margin: 8px 0 0;
+  max-width: 60ch;
+}
+
+.banner {
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+}
+.banner.warn { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
+.banner.error { background: var(--error-bg); color: var(--error); border-color: transparent; }

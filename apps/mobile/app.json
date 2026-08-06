@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "SkelClock",
+    "slug": "skelclock",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "skelclock",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "au.com.skelscaff.skelclock",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "SkelClock records where you are when you clock on and off, so your hours can be matched to the right job. It does not track you between clock events.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "SkelClock records where you are when you clock on and off, so your hours can be matched to the right job. It does not track you between clock events."
+      }
+    },
+    "android": {
+      "package": "au.com.skelscaff.skelclock",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "SkelClock records where you are when you clock on and off, so your hours can be matched to the right job. It does not track you between clock events."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

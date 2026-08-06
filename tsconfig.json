@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@skelclock/core": ["packages/core/src/index.ts"],
+      "@skelclock/odoo": ["packages/odoo/src/index.ts"],
+      "@skelclock/server": ["packages/server/src/index.ts"]
+    }
+  },
+  "include": ["packages/*/src/**/*.ts", "scripts/**/*.ts"],
+  "exclude": ["node_modules", "apps"]
+}

@@ -1,0 +1,26 @@
+{
+  "name": "skelclock",
+  "private": true,
+  "version": "0.1.0",
+  "description": "SkelScaff field attendance — clock in/out, GPS, offline, Odoo sync",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "poc": "node --import tsx scripts/poc.ts",
+    "test": "node --import tsx --test packages/core/src/core.test.ts packages/odoo/src/odoo.test.ts scripts/integration.test.ts",
+    "test:unit": "node --import tsx --test packages/core/src/core.test.ts packages/odoo/src/odoo.test.ts",
+    "odoo:probe": "node --import tsx scripts/odoo-probe.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.3.14",
+    "@types/node": "^24.10.1",
+    "tsx": "^4.20.6",
+    "typescript": "~5.9.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
