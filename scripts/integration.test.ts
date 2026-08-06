@@ -15,8 +15,11 @@ import {
   addMissingEvent,
   approveTimesheet,
   clockCrew,
+  confirmSuggestedEvent,
   confirmTimesheet,
   correctEvent,
+  dismissSuggestedEvent,
+  DbError,
   enqueueTimesheetPush,
   getAuditTrail,
   getWorkerHome,
@@ -25,6 +28,7 @@ import {
   importJobs,
   ingestEvents,
   listExceptions,
+  listPendingSuggestions,
   listSyncJobs,
   listTimesheets,
   lockTimesheet,
@@ -32,6 +36,7 @@ import {
   reopenTimesheet,
   retrySyncJob,
   runSyncWorker,
+  SuggestionError,
   type Db,
 } from '@skelclock/server';
 
@@ -1378,6 +1383,225 @@ test('a night shift crossing midnight stays on one timesheet', async () => {
     assert.equal(sheets.rows.length, 1);
     assert.equal(sheets.rows[0]!.work_date.toISOString().slice(0, 10), '2026-08-04');
     assert.equal(sheets.rows[0]!.total_paid_minutes, 480);
+  } finally {
+    await close();
+  }
+});
+
+// --- Phase 3: geofence-raised clock suggestions -----------------------------
+
+test('Phase 3: an auto_geofence clock-in lands as a suggestion, invisible until confirmed', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [
+        clockEvent(fx, {
+          eventType: 'clock_in',
+          deviceTime: '2026-08-04T06:00:00Z',
+          clockMethod: 'auto_geofence',
+        }),
+      ],
+    });
+
+    const row = await db.query<{ is_suggested: boolean; clock_method: string }>(
+      'select is_suggested, clock_method from attendance_event where employee_id = $1',
+      [fx.employeeId],
+    );
+    assert.equal(row.rows[0]!.clock_method, 'auto_geofence');
+    assert.equal(row.rows[0]!.is_suggested, true);
+
+    // Not visible to the worker's state or hours until confirmed.
+    const home = await getWorkerHome(db, {
+      companyId: fx.companyId,
+      employeeId: fx.employeeId,
+      workDate: '2026-08-04',
+      now: NOW,
+    });
+    assert.equal(home.clockState, 'off');
+    assert.equal(home.minutesWorked, 0);
+
+    const suggestions = await listPendingSuggestions(db, {
+      companyId: fx.companyId,
+      employeeId: fx.employeeId,
+    });
+    assert.equal(suggestions.length, 1);
+    assert.equal(suggestions[0]!.eventType, 'clock_in');
+  } finally {
+    await close();
+  }
+});
+
+test('Phase 3: confirming a suggestion makes it count', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [
+        clockEvent(fx, {
+          eventType: 'clock_in',
+          deviceTime: '2026-08-04T06:00:00Z',
+          clockMethod: 'auto_geofence',
+        }),
+      ],
+    });
+    const suggestion = (
+      await listPendingSuggestions(db, { companyId: fx.companyId, employeeId: fx.employeeId })
+    )[0]!;
+
+    await confirmSuggestedEvent(db, {
+      companyId: fx.companyId,
+      employeeId: fx.employeeId,
+      eventId: suggestion.id,
+      actorUserId: fx.workerUserId,
+      now: NOW,
+    });
+
+    const home = await getWorkerHome(db, {
+      companyId: fx.companyId,
+      employeeId: fx.employeeId,
+      workDate: '2026-08-04',
+      now: NOW,
+    });
+    assert.equal(home.clockState, 'working');
+
+    const remaining = await listPendingSuggestions(db, {
+      companyId: fx.companyId,
+      employeeId: fx.employeeId,
+    });
+    assert.equal(remaining.length, 0);
+  } finally {
+    await close();
+  }
+});
+
+test('Phase 3: dismissing a suggestion voids it and it never counts', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [
+        clockEvent(fx, {
+          eventType: 'clock_in',
+          deviceTime: '2026-08-04T06:00:00Z',
+          clockMethod: 'auto_geofence',
+        }),
+      ],
+    });
+    const suggestion = (
+      await listPendingSuggestions(db, { companyId: fx.companyId, employeeId: fx.employeeId })
+    )[0]!;
+
+    await dismissSuggestedEvent(db, {
+      companyId: fx.companyId,
+      employeeId: fx.employeeId,
+      eventId: suggestion.id,
+      actorUserId: fx.workerUserId,
+      reason: 'Drove past the site, did not stop',
+      now: NOW,
+    });
+
+    const row = await db.query<{ voided_at: Date | null; void_reason: string | null }>(
+      'select voided_at, void_reason from attendance_event where id = $1',
+      [suggestion.id],
+    );
+    assert.ok(row.rows[0]!.voided_at);
+    assert.equal(row.rows[0]!.void_reason, 'Drove past the site, did not stop');
+
+    const home = await getWorkerHome(db, {
+      companyId: fx.companyId,
+      employeeId: fx.employeeId,
+      workDate: '2026-08-04',
+      now: NOW,
+    });
+    assert.equal(home.clockState, 'off');
+
+    const remaining = await listPendingSuggestions(db, {
+      companyId: fx.companyId,
+      employeeId: fx.employeeId,
+    });
+    assert.equal(remaining.length, 0);
+  } finally {
+    await close();
+  }
+});
+
+test('Phase 3: dismissing a suggestion requires a reason', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [
+        clockEvent(fx, {
+          eventType: 'clock_in',
+          deviceTime: '2026-08-04T06:00:00Z',
+          clockMethod: 'auto_geofence',
+        }),
+      ],
+    });
+    const suggestion = (
+      await listPendingSuggestions(db, { companyId: fx.companyId, employeeId: fx.employeeId })
+    )[0]!;
+
+    await assert.rejects(
+      () =>
+        dismissSuggestedEvent(db, {
+          companyId: fx.companyId,
+          employeeId: fx.employeeId,
+          eventId: suggestion.id,
+          actorUserId: fx.workerUserId,
+          reason: '   ',
+        }),
+      (error: unknown) => error instanceof SuggestionError && error.code === 'reason_required',
+    );
+  } finally {
+    await close();
+  }
+});
+
+test('Phase 3: a worker cannot confirm another employee\'s suggestion', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [
+        clockEvent(fx, {
+          eventType: 'clock_in',
+          deviceTime: '2026-08-04T06:00:00Z',
+          clockMethod: 'auto_geofence',
+        }),
+      ],
+    });
+    const suggestion = (
+      await listPendingSuggestions(db, { companyId: fx.companyId, employeeId: fx.employeeId })
+    )[0]!;
+
+    // fx.supervisorEmployeeId is a real employee in the same company, just not
+    // the one this suggestion belongs to - the query must not find it.
+    await assert.rejects(
+      () =>
+        confirmSuggestedEvent(db, {
+          companyId: fx.companyId,
+          employeeId: fx.supervisorEmployeeId,
+          eventId: suggestion.id,
+          actorUserId: fx.supervisorUserId,
+        }),
+      (error: unknown) => error instanceof DbError,
+    );
+
+    // Untouched: still pending for its actual owner.
+    const home = await getWorkerHome(db, {
+      companyId: fx.companyId,
+      employeeId: fx.employeeId,
+      workDate: '2026-08-04',
+      now: NOW,
+    });
+    assert.equal(home.clockState, 'off');
   } finally {
     await close();
   }

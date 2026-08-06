@@ -11,8 +11,8 @@
       "supportsTablet": false,
       "bundleIdentifier": "au.com.skelscaff.skelclock",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "SkelClock records where you are when you clock on and off, so your hours can be matched to the right job. It does not track you between clock events.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "SkelClock records where you are when you clock on and off, so your hours can be matched to the right job. It does not track you between clock events."
+        "NSLocationWhenInUseUsageDescription": "SkelClock records where you are when you clock on and off, so your hours can be matched to the right job.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "If you turn on auto-detect arrival, SkelClock checks your location in the background to suggest a clock-in when you reach a job site. This is off by default, you can turn it off anytime, and every automatic suggestion needs your confirmation before it counts as a real clock event."
       }
     },
     "android": {
@@ -25,10 +25,15 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
+      "expo-notifications",
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "SkelClock records where you are when you clock on and off, so your hours can be matched to the right job. It does not track you between clock events."
+          "locationWhenInUsePermission": "SkelClock records where you are when you clock on and off, so your hours can be matched to the right job.",
+          "locationAlwaysAndWhenInUsePermission": "If you turn on auto-detect arrival, SkelClock checks your location in the background to suggest a clock-in when you reach a job site. This is off by default, you can turn it off anytime, and every automatic suggestion needs your confirmation before it counts as a real clock event.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
       ]
     ],

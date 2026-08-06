@@ -224,6 +224,13 @@ async function ingestOne(
         priorEvents,
       });
 
+      // Phase 3: a geofence-raised event lands as a suggestion, not a live
+      // clock - keyed purely off clockMethod so the client can't claim
+      // confirmed status for itself by lying about this field. Everything
+      // downstream (deriveState/orderedLiveEvents) already ignores it until
+      // a later update flips this back to false.
+      const isSuggested = event.clockMethod === 'auto_geofence';
+
       const inserted = await one<{ id: string }>(
         tx,
         `insert into attendance_event (
@@ -231,9 +238,9 @@ async function ingestOne(
            event_type, device_time, server_time,
            latitude, longitude, gps_accuracy_m,
            inside_geofence, distance_from_site_m, outside_reason,
-           clock_method, was_offline, source_device_id, idempotency_key, created_by
+           clock_method, was_offline, is_suggested, source_device_id, idempotency_key, created_by
          ) values (
-           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
          )
          -- The unique index is the real guard; this makes a racing duplicate
          -- return quietly instead of surfacing a constraint error to a phone
@@ -257,6 +264,7 @@ async function ingestOne(
           event.outsideReason ?? null,
           event.clockMethod,
           event.wasOffline,
+          isSuggested,
           event.deviceId ?? null,
           key,
           event.actingUserId ?? actingUserId,
@@ -284,8 +292,8 @@ async function ingestOne(
           `insert into attendance_event (
              company_id, employee_id, timesheet_id, job_id, work_activity_id,
              event_type, device_time, server_time, clock_method, was_offline,
-             source_device_id, idempotency_key, created_by
-           ) values ($1,$2,$3,$4,$5,'break_end',$6,$7,$8,$9,$10,$11,$12)
+             is_suggested, source_device_id, idempotency_key, created_by
+           ) values ($1,$2,$3,$4,$5,'break_end',$6,$7,$8,$9,$10,$11,$12,$13)
            on conflict (company_id, idempotency_key) do nothing`,
           [
             companyId,
@@ -297,6 +305,7 @@ async function ingestOne(
             ctx.now.toISOString(),
             event.clockMethod,
             event.wasOffline,
+            isSuggested,
             event.deviceId ?? null,
             `${key}.auto-break-end`,
             event.actingUserId ?? actingUserId,
