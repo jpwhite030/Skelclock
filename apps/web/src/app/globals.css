@@ -1,243 +1,959 @@
-/*
- * Office dashboard styling.
- *
- * Written as plain CSS with custom properties rather than a utility framework:
- * this is four table-shaped screens, and a build-time CSS pipeline would be
- * more machinery than the problem needs. Light theme by default because the
- * office runs under fluorescent lights, with a dark variant for anyone whose
- * system asks for it.
- */
+/* ============================================================================
+   SKELCLOCK — SETOUT
+   A plotted scaffold elevation, not a web dashboard.
+
+   Two grounds. Working now, Exceptions and Odoo sync are drawings on a dark
+   canvas — glanced at, or read by the machine. Timesheets is paper, because
+   that is the twenty-minute read and ink beats bone on black for that.
+
+   Every major dimension is a real Kwikstage measurement at 1:12.5.
+   One rosette (500mm) = 40px = one table row. Bay widths are sizes SkelScaff
+   actually stocks. The one number that is NOT derived is the 30px Timesheets
+   row: a fortnight for a full crew is ~170 rows and 40px makes that 6800px of
+   scroll. The office beat the drawing there and that is the correct outcome.
+   ========================================================================= */
 
 :root {
-  --bg: #f6f7f9;
-  --surface: #ffffff;
-  --border: #dfe3e8;
-  --text: #17202a;
-  --text-muted: #647085;
+  /* ── DARK GROUND. The Whiteframe values, verbatim. ────────────────────── */
+  --canvas:      #0f0e0c;
+  --canvas-100:  #171613;   /* error console, hazard band ground */
+  --canvas-200:  #201e1a;   /* nav rail ground */
 
-  --accent: #1d4ed8;
-  --ok: #15803d;
-  --ok-bg: #dcfce7;
-  --warn: #b45309;
-  --warn-bg: #fef3c7;
-  --error: #b91c1c;
-  --error-bg: #fee2e2;
-  --info-bg: #e0e7ff;
+  /* ── INK ON DARK ──────────────────────────────────────────────────────── */
+  --bone:        #f4f1ea;   /* 17.1:1 */
+  --bone-700:    #cbc6bc;   /* 11.3:1 — all table body text */
+  --muted:       #928c81;   /*  5.8:1 — labels, secondary */
+  --faint:       #837e73;   /*  4.8:1 — .sub lines, thead */
+  --faintest:    #6a655c;   /* rules and decoration ONLY. Never carries text. */
 
-  --radius: 10px;
-  --shadow: 0 1px 2px rgb(23 32 42 / 6%), 0 4px 12px rgb(23 32 42 / 4%);
+  /* ── PAPER GROUND. Used by Timesheets, and by nothing else. ───────────── */
+  --paper:       #ece8df;
+  --paper-200:   #e2ddd2;   /* title-block cells, group bands */
+  --ink:         #14130f;   /* 15.2:1 on paper */
+  --ink-700:     #45423b;   /*  8.2:1 — body figures */
+  --ink-faint:   #625e56;   /*  5.3:1 — labels */
+  --paper-line:  #d4cfc4;
+  --paper-rule5: #bdb7a9;   /* the counting rule — every 5th row */
+
+  /* ── STEEL. The recorded colour of the gear, not a designed grey ramp. ── */
+  --steel:       #607898;
+  --steel-lit:   #8aaac8;
+  --line:        #2b2926;
+  --line-strong: #423f3a;
+  --rule-steel:  rgba(96, 120, 152, 0.15);
+  --hover-steel: rgba(138, 170, 200, 0.055);
+
+  /* ── CAD LEGEND. The SkelScaff drawing convention, meanings intact.
+        MAGENTA = outer boundary  → something has crossed a line
+        YELLOW  = inner face      → still in hand
+        GREEN   = boards down     → you can stand on it                     */
+  --cad-magenta: #ff3d9a;   /* 5.9:1 */
+  --cad-yellow:  #ffcf2e;   /* 13.1:1 */
+  --cad-green:   #3ee08a;   /* 11.2:1 */
+  --fill-magenta: rgba(255,  61, 154, 0.12);
+  --fill-yellow:  rgba(255, 207,  46, 0.11);
+  --fill-green:   rgba( 62, 224, 138, 0.11);
+
+  /* ── CAD LEGEND ON PAPER. Same three meanings, re-cut as ink.
+        Yellow on paper is 1.2:1 and invisible, so these are not reused.    */
+  --cad-magenta-ink: #b8005e;  /* 5.4:1 */
+  --cad-yellow-ink:  #7a5600;  /* 5.4:1 */
+  --cad-green-ink:   #0a6b3c;  /* 5.4:1 */
+  --fill-magenta-ink: rgba(184,   0,  94, 0.10);
+  --fill-yellow-ink:  rgba(122,  86,   0, 0.11);
+  --fill-green-ink:   rgba( 10, 107,  60, 0.10);
+
+  /* ── BRAND. The real #4C4177, declared in SkelScaff's own Elementor kit as
+        both --e-global-color-primary and --e-global-color-accent, and 86% of
+        the favicon. CHROME ONLY — it never touches data.                   */
+  --brand:     #4c4177;
+  --brand-lit: #6e5ea6;
+
+  /* ── SPACING = the rosette ladder at 1:12.5. 500mm → 40px. ────────────── */
+  --r-8:   5px;   /* ⅛ rosette */
+  --r-4:  10px;   /* ¼ */
+  --r-2:  20px;   /* ½ — also the frame inset */
+  --r:    40px;   /* ONE ROSETTE = 500mm. Table row height. */
+  --r15:  60px;
+  --r3:  120px;   /* 3 rosettes — the headline figure cap */
+  --r6:  240px;   /* 6 rosettes — the elevation band */
+  --lift:160px;   /* 2000mm = 4 rosettes. Section spacing. */
+  --row-ledger: 30px;  /* Timesheets only. See the header note. */
+
+  /* ── WIDTHS = real Kwikstage bay sizes at 1:12.5. ─────────────────────── */
+  --bay-762:   61px;
+  --bay-1270: 102px;
+  --bay-1829: 146px;
+  --bay-2438: 195px;
+  --bay-3050: 244px;
+
+  /* ── TYPE ─────────────────────────────────────────────────────────────── */
+  --font-display: var(--font-archivo),    system-ui, sans-serif;
+  --font-mono:    var(--font-plex),       ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --font-sans:    var(--font-instrument), system-ui, sans-serif;
+
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #12161c;
-    --surface: #1b212a;
-    --border: #2e3846;
-    --text: #f2f5f8;
-    --text-muted: #9aa7b6;
+/* NO @media (prefers-color-scheme). One look. It is not a user preference,
+   and the previous build's second theme was never designed or tested. */
 
-    --accent: #60a5fa;
-    --ok: #4ade80;
-    --ok-bg: #14361f;
-    --warn: #fbbf24;
-    --warn-bg: #3d2c07;
-    --error: #f87171;
-    --error-bg: #3f1616;
-    --info-bg: #1e2a4a;
-  }
-}
+/* ============================================================================
+   BASE
+   ========================================================================= */
 
-* { box-sizing: border-box; }
+*, *::before, *::after { box-sizing: border-box; }
+
+html { scrollbar-gutter: stable; }
 
 body {
   margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--canvas);
+  color: var(--bone-700);
+  font: 400 16px/1.5 var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  font-synthesis-weight: none;
+  text-rendering: optimizeLegibility;
 }
 
-a { color: var(--accent); }
-
-.shell { display: flex; min-height: 100vh; flex-direction: column; }
-
-header.topbar {
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  padding: 0 20px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  flex-wrap: wrap;
+/* Slashed zero, tabular figures. A drawing has slashed zeros. */
+[class*="mono"], .sheet, .lbl, .dat, .mk, code, pre, input, select, button {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "zero" 1, "tnum" 1;
 }
 
-.brand { font-weight: 700; font-size: 18px; padding: 14px 0; letter-spacing: -0.2px; }
+h1, h2, h3, h4, h5, h6 { margin: 0; font-weight: 600; }
+p { margin: 0; text-wrap: pretty; }
+a { color: inherit; text-decoration: none; }
+img { display: block; max-width: 100%; }
+ul, ol, dl, dd { margin: 0; padding: 0; list-style: none; }
 
-nav.tabs { display: flex; gap: 4px; overflow-x: auto; }
+::selection { background: var(--brand-lit); color: var(--bone); }
 
-nav.tabs a {
-  padding: 14px 12px;
-  text-decoration: none;
-  color: var(--text-muted);
-  border-bottom: 2px solid transparent;
-  white-space: nowrap;
-  font-weight: 500;
+/* Focus. Yellow because that is the "in hand" colour — you are working on
+   this control. On paper, yellow disappears, so paper focus is brand purple. */
+:focus-visible { outline: 2px solid var(--cad-yellow); outline-offset: 2px; }
+.paper :focus-visible { outline-color: var(--brand); }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
 
-nav.tabs a:hover { color: var(--text); }
-nav.tabs a[aria-current="page"] { color: var(--text); border-bottom-color: var(--accent); }
+/* ============================================================================
+   TYPE — five sizes, three families, three hard jobs.
 
-main { padding: 24px 20px 64px; max-width: 1400px; width: 100%; margin: 0 auto; }
+   IBM Plex Mono is the primary face, ~65% of the interface, because it was
+   drawn for technical documentation rather than for code editors. It is
+   neither JetBrains Mono nor Roboto Mono, which are the giveaway defaults.
 
-h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.3px; }
-.subtitle { color: var(--text-muted); margin: 0 0 20px; }
+   Archivo appears about eight times per screen, always condensed to wdth 78,
+   which echoes the SkelScaff logo's measured 0.34 width:cap ratio.
 
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 24px; }
+   Instrument Sans is restricted to human sentences. If a string is a label, a
+   number, a name, an ID, a status or a nav item, it is mono. No exceptions.
+   ========================================================================= */
 
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px;
-  box-shadow: var(--shadow);
+.dsp {
+  font-family: var(--font-display);
+  font-variation-settings: 'wdth' 78;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 0.94;
 }
 
-.card .value { font-size: 28px; font-weight: 700; line-height: 1.1; }
-.card .label { color: var(--text-muted); font-size: 13px; margin-top: 4px; }
+/* THE label. One spec, one size. Hierarchy is five colour steps, not sizes. */
+.lbl {
+  font: 500 11px/1 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
 
-.panel {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
+.fig  { font-size: clamp(56px, 8vw, var(--r3)); }  /* the one numeral per screen */
+.dim  { font-size: 26px; }                          /* secondary numerals, group names */
+.lead { font: 400 16px/1.5 var(--font-sans); }      /* human sentences */
+.dat  { font: 400 13px/1.2 var(--font-mono); letter-spacing: 0.06em; }
+
+/* ============================================================================
+   TEXTURE — three fixed layers, all cheap, all pointer-events:none.
+   ========================================================================= */
+
+/* 1. THE SHEET GRID. Fixed, so content scrolls across it the way a drawing
+      slides under a light table. Verticals every rosette; a heavier line every
+      lift (2000mm). The plot-line variance lives HERE and nowhere near a table
+      of numbers — a real plotter does not lay down even line weight, but it
+      also does not get to imply that row 7 matters more than row 6.
+      The two vertical cycles (40px, 280px) are coprime so the eye never locks
+      onto the repeat. */
+body::before {
+  content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-image:
+    repeating-linear-gradient(90deg, rgba(96,120,152,.055) 0 1px, transparent 1px var(--r)),
+    repeating-linear-gradient(90deg, rgba(96,120,152,.030) 0 1px, transparent 1px 280px),
+    repeating-linear-gradient( 0deg, rgba(96,120,152,.075) 0 1px, transparent 1px var(--lift));
+}
+/* The paper screen gets its own, in ink. */
+body:has(.paper)::before {
+  background-image:
+    repeating-linear-gradient(90deg, rgba(20,19,15,.030) 0 1px, transparent 1px var(--r)),
+    repeating-linear-gradient( 0deg, rgba(20,19,15,.045) 0 1px, transparent 1px var(--lift));
+}
+
+/* 2. FILM GRAIN. The same technique as Whiteframe: fixed, straight alpha, no
+      blend mode. Fixed grain reads as a lens over the whole image; scrolling
+      grain reads as texture painted on objects. Dropped to 0.035 and
+      baseFrequency raised to 0.85 — finer and lighter, because this canvas
+      carries 13px mono all day. */
+body::after {
+  content: ''; position: fixed; inset: 0; z-index: 90; pointer-events: none;
+  opacity: .035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* 3. HONEYCOMB — the nav rail only. See .rail below. */
+
+/* ============================================================================
+   SHELL — a standard, not a topbar. Elevations read vertically.
+   ========================================================================= */
+
+.rail {
+  position: fixed; inset: 0 auto 0 0; width: var(--bay-2438); z-index: 4;
+  display: flex; flex-direction: column;
+  background-color: var(--canvas-200);
+  border-right: 1px solid var(--line);
+  /* Honeycomb = stair tower, straight off the SkelScaff CAD legend. The
+     0.29px-per-row drift from rounding the 27.71px tile to 28px is real and
+     deliberately not corrected — it is why the hatch never locks into a seam. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='28' viewBox='0 0 48 28'%3E%3Cg fill='none' stroke='%238aaac8' stroke-opacity='0.10' stroke-width='1'%3E%3Cpath d='M8 0 L0 14 L8 28 M8 0 L24 0 M8 28 L24 28 M24 0 L32 14 L24 28 M32 14 L48 14 M0 14 L-8 14'/%3E%3C/g%3E%3C/svg%3E");
+}
+
+.rail__mark { padding: var(--r-2) var(--r-2) var(--r-4); }
+/* REAL asset: SkelScaff-Logo.svg from skelscaff.com.au, at its own declared
+   142x48. It is a 228x78 raster in a Figma wrapper — do not trace it, do not
+   redraw it, do not force a different aspect, do not substitute a mark. */
+.rail__mark img { width: 142px; height: auto; }
+
+.rail__word {
+  font: 500 11px/1 var(--font-mono);
+  letter-spacing: .22em;          /* echoes the logo descriptor's 0.20–0.30em */
+  color: var(--muted);
+  padding: 0 var(--r-2) var(--r-2);
+}
+
+.rail nav { border-top: 1px solid var(--line); }
+.rail nav a {
+  display: block; height: var(--r);
+  padding-left: calc(var(--r-2) - 3px);
+  border-left: 3px solid transparent;
+  font: 500 12px/40px var(--font-mono);
+  letter-spacing: .12em; text-transform: uppercase;
+  color: var(--muted);
+  transition: color 140ms var(--ease), background-color 220ms var(--ease);
+}
+.rail nav a::after {                       /* sheet number, right-hung */
+  content: attr(data-sht); float: right; padding-right: var(--r-2);
+  color: var(--faint); font-weight: 400; letter-spacing: 0;
+}
+.rail nav a:hover { color: var(--bone); background: rgba(110,94,166,.16); }
+.rail nav a[aria-current="page"] {
+  color: var(--bone);
+  background: var(--brand);
+  border-left-color: var(--bone);
+}
+.rail nav a[aria-current="page"]::after { color: var(--bone-700); }
+
+.rail__foot {
+  margin-top: auto; padding: var(--r-2);
+  border-top: 1px solid var(--line);
+  font: 400 11px/1.7 var(--font-mono);
+  letter-spacing: .06em; color: var(--faint);
+}
+.rail__foot dt {
+  font-weight: 500; letter-spacing: .14em; color: var(--muted);
+  text-transform: uppercase;
+}
+.rail__foot .next[data-soon] { color: var(--cad-yellow); }
+
+/* CONTENT FRAME. The rail is the outer standard; main is the platform.
+   Both frame hairlines are steel — the legend colours are spent on data. */
+main {
+  margin-left: var(--bay-2438);
+  padding: var(--r-2) var(--r-2) var(--lift);
+  position: relative; z-index: 1;
+  border-left: 1px solid rgba(96,120,152,.28);
+  min-height: 100vh;
+}
+main.paper {
+  background: var(--paper);
+  color: var(--ink-700);
+  border-left-color: var(--paper-line);
+  padding-top: 0;
+}
+
+.sht {                 /* screen title. Archivo + a mono sheet number. */
+  display: flex; align-items: baseline; gap: var(--r-2); flex-wrap: wrap;
+  padding-bottom: var(--r-2);
+}
+.sht h1 { font-size: 26px; }
+.sht .no { color: var(--faint); }
+.paper .sht .no { color: var(--ink-faint); }
+.paper .sht h1 { color: var(--ink); }
+
+/* ============================================================================
+   STATUS — physical form first, colour second, word always.
+   Nothing in this app is encoded by colour alone, by construction.
+   ========================================================================= */
+
+.mk {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 18px; padding: 0 7px;
+  font: 500 11px/1 var(--font-mono);
+  letter-spacing: .08em; text-transform: uppercase;
+  white-space: nowrap; vertical-align: middle;
+}
+.mk::before { content: ''; width: 10px; height: 3px; flex: 0 0 10px; }
+
+/* ── The approval ladder. Five states, five forms, weight increasing, so
+      "further along" is legible before the word is read. */
+
+.mk-draft {                        /* DRAFT — nobody has signed it */
+  border: 1px dotted rgba(255,207,46,.50); color: var(--cad-yellow); }
+.mk-draft::before {
+  background: repeating-linear-gradient(90deg,currentColor 0 2px,transparent 2px 4px); }
+
+.mk-confirmed {                    /* WORKER CONFIRMED — he has, you haven't */
+  border: 1px dashed rgba(255,207,46,.60); color: var(--cad-yellow); }
+.mk-confirmed::before {
+  background: linear-gradient(90deg,currentColor 0 5px,transparent 5px 10px); }
+
+.mk-approved {                     /* APPROVED — boards on, not tied */
+  border: 1px solid rgba(62,224,138,.55); color: var(--cad-green); }
+.mk-approved::before { background: currentColor; }
+
+.mk-synced {                       /* SYNCED — it is in payroll */
+  background: var(--fill-green); color: var(--cad-green); }
+.mk-synced::before { background: currentColor; }
+
+.mk-locked {                       /* LOCKED — tied off, nobody moves it */
+  background: var(--fill-green); color: var(--cad-green);
+  border-left: 3px solid var(--cad-green); padding-left: 4px; }
+.mk-locked::before { background: currentColor; }
+
+/* ── BREACH. Off-site, failed, given up, high. A hard 3px vertical edge and
+      bone text. The only element in the app with a heavy vertical rule. */
+.mk-breach {
+  border-left: 3px solid var(--cad-magenta); color: var(--bone);
+  padding-left: 5px; }
+.mk-breach::before { display: none; }
+
+/* ── SET OUT. Pending, in progress, awaiting. Generic in-hand state. */
+.mk-setout { border: 1px dashed rgba(255,207,46,.55); color: var(--cad-yellow); }
+.mk-setout::before {
+  background: repeating-linear-gradient(90deg,currentColor 0 3px,transparent 3px 5px); }
+
+/* ── VOID / UNLIT. No GPS, not queued, nothing to report — and, on the glance
+      screens, everything that is FINE. Good news is unlit. */
+.mk-void {
+  height: 18px; display: inline-flex; align-items: center; gap: 5px;
+  font: 400 11px/1 var(--font-mono); letter-spacing: .08em;
+  text-transform: uppercase; color: var(--faint); vertical-align: middle; }
+/* A dash, never a blank cell: an empty cell reads as a failed load, a dash
+   reads as "nothing to report here", which is what it means. */
+.mk-void::before { content: '—'; }
+
+/* Paper variants — Timesheets only. */
+.paper .mk-draft     { border-color: rgba(122,86,0,.55);  color: var(--cad-yellow-ink); }
+.paper .mk-confirmed { border-color: rgba(122,86,0,.65);  color: var(--cad-yellow-ink); }
+.paper .mk-approved  { border-color: rgba(10,107,60,.60); color: var(--cad-green-ink); }
+.paper .mk-synced    { background: var(--fill-green-ink); color: var(--cad-green-ink); }
+.paper .mk-locked    { background: var(--fill-green-ink); color: var(--cad-green-ink);
+                       border-left-color: var(--cad-green-ink); }
+.paper .mk-breach    { border-left-color: var(--cad-magenta-ink); color: var(--ink); }
+.paper .mk-void      { color: var(--ink-faint); }
+
+/* ============================================================================
+   THE TABLE — one engine, dense, six columns maximum, never nine.
+   ========================================================================= */
+
+.sheet { width: 100%; border-collapse: collapse; table-layout: fixed; }
+
+.sheet thead th {
+  position: sticky; top: 0; z-index: 3;   /* GENUINELY sticky */
+  height: var(--r-2); background: var(--canvas);
+  color: var(--faint); text-align: left; padding: 0 var(--r-4);
+  font: 500 11px/1 var(--font-mono);
+  letter-spacing: .14em; text-transform: uppercase;
+  box-shadow: inset 0 -1px 0 var(--line-strong);
+}
+.sheet thead th.num { text-align: right; }
+
+.sheet tbody td {
+  height: var(--r);                        /* ONE ROSETTE */
+  padding: 0 var(--r-4);
+  vertical-align: middle;                  /* marks stop floating above baselines */
+  font: 400 13px/1.2 var(--font-mono);
+  letter-spacing: .06em; color: var(--bone-700);
+  border-top: 1px solid var(--rule-steel);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sheet td .sub {                           /* second line inside a cell */
+  display: block; font-size: 11px; line-height: 1.1;
+  color: var(--faint); letter-spacing: .04em; margin-top: 3px;
+  overflow: hidden; text-overflow: ellipsis; }
+.sheet td.num  { text-align: right; }
+.sheet td.name { font-weight: 500; color: var(--bone); }
+/* Deliberately NOT named `.act` — that is the text-action button, and a cell
+   carrying both drew a stray 1px rule under every row in the Sync table. */
+.sheet td.rhs  { text-align: right; }
+
+/* LIFT LINES. Every 4th row = 4 rosettes = 2000mm = one lift. This replaces
+   zebra striping: it tracks the eye across the row AND it is the grid.
+   It is the ONLY variation in rule weight inside a table. */
+.sheet tbody tr:nth-child(4n+1) td { border-top-color: var(--line-strong); }
+
+.sheet tbody tr:hover td { background: var(--hover-steel); color: var(--bone); }
+.sheet tbody tr:hover td:first-child { box-shadow: inset 2px 0 0 var(--steel-lit); }
+
+/* Row-level breach: something on this row has crossed a line. */
+.sheet tr[data-breach] td:first-child { box-shadow: inset 3px 0 0 var(--cad-magenta); }
+.sheet tr[data-hold]   td:first-child { box-shadow: inset 3px 0 0 var(--cad-yellow); }
+
+/* Empty states live INSIDE the table, so you never get an orphan header row
+   over nothing — which is what the previous build did on all four screens. */
+.sheet .empty td {
+  height: var(--lift); text-align: center; vertical-align: middle;
+  font: 400 16px/1.5 var(--font-sans); letter-spacing: 0; color: var(--muted);
+  white-space: normal;
+}
+.sheet .empty td:first-child { box-shadow: none; }
+
+/* ============================================================================
+   CONTROLS — no boxes. A rule, a chevron, and a hover ground.
+   ========================================================================= */
+
+.spec {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: 0 var(--r-4); min-height: 56px;
+  border-top: 1px solid var(--line-strong);
+  border-bottom: 1px solid var(--line);
+  font: 500 11px/1 var(--font-mono);
+  letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
+}
+.spec .sep { color: var(--faintest); }
+.spec label { display: inline-flex; align-items: center; gap: var(--r-8); }
+.spec .grow { margin-left: auto; }
+
+.paper .spec {
+  border-top-color: var(--paper-rule5);
+  border-bottom-color: var(--paper-line);
+  color: var(--ink-faint);
+}
+.paper .spec .sep { color: var(--paper-rule5); }
+
+.spec select, .spec input {
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom-color: var(--muted);   /* always visible: it is a control */
+  color: var(--bone);
+  font: 500 13px var(--font-mono);
+  letter-spacing: .06em; text-transform: none;
+  padding: 3px 18px 3px 4px; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='6'%3E%3Cpath d='M0 0 L4.5 6 L9 0 Z' fill='%23928c81'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 3px center;
+  transition: background-color 140ms var(--ease), border-color 140ms var(--ease);
+}
+.spec select option { background: var(--canvas-200); color: var(--bone); }
+.spec input[type="date"] { padding-right: 4px; background-image: none; }
+.spec select:hover, .spec input:hover {
+  background-color: rgba(138,170,200,.07); border-color: var(--line-strong);
+  border-bottom-color: var(--bone); }
+.spec select:focus-visible, .spec input:focus-visible { border-color: var(--cad-yellow); }
+
+.paper .spec select, .paper .spec input {
+  color: var(--ink);
+  border-bottom-color: var(--ink-faint);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='6'%3E%3Cpath d='M0 0 L4.5 6 L9 0 Z' fill='%23625e56'/%3E%3C/svg%3E");
+}
+.paper .spec select option { background: var(--paper); color: var(--ink); }
+.paper .spec input[type="date"] { background-image: none; }
+.paper .spec select:hover, .paper .spec input:hover {
+  background-color: rgba(20,19,15,.06); border-color: var(--paper-line);
+  border-bottom-color: var(--ink); }
+.paper .spec select:focus-visible, .paper .spec input:focus-visible {
+  border-color: var(--brand); }
+
+/* The APPLY button is a real button, always present, never JS-conditional.
+   The office should never have to guess whether a control has taken. */
+.btn {
+  appearance: none; cursor: pointer;
+  height: 28px; padding: 0 var(--r-4);
+  background: var(--brand); border: 1px solid var(--brand); color: #fff;
+  font: 500 11px/1 var(--font-mono); letter-spacing: .14em; text-transform: uppercase;
+  transition: background-color 140ms var(--ease);
+}
+.btn:hover { background: var(--brand-lit); border-color: var(--brand-lit); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* Text action — used for Retry and Run all, on the dark screens. */
+.act {
+  appearance: none; background: none; border: 0; padding: 0 0 2px; cursor: pointer;
+  font: 500 11px/1 var(--font-mono); letter-spacing: .14em; text-transform: uppercase;
+  color: var(--bone); border-bottom: 1px solid var(--steel);
+  transition: color 140ms var(--ease), border-color 140ms var(--ease);
+}
+.act:hover { color: var(--cad-magenta); border-bottom-color: var(--cad-magenta); }
+.act[data-busy] { color: var(--cad-yellow); border-bottom-style: dashed; cursor: progress; }
+.act:disabled { color: var(--faint); border-bottom-color: var(--line); cursor: not-allowed; }
+
+/* ============================================================================
+   SHT 01 — WORKING NOW
+   ========================================================================= */
+
+.dimline {
+  min-height: var(--lift);
+  display: flex; align-items: baseline; gap: var(--r-2); flex-wrap: wrap;
+  padding-bottom: var(--r-2);
+}
+/* Optical, not mathematical: the numeral's left stem sits ON the frame line. */
+.dimline__fig { margin-left: -6px; color: var(--bone); }
+.dimline__figlbl { display: block; color: var(--muted); margin-top: var(--r-4); }
+.dimline__run { display: flex; align-items: baseline; gap: var(--r-4); flex-wrap: wrap; }
+.dimline__v { font-size: 26px; color: var(--bone-700); }
+/* The urgent number is physically larger, not merely recoloured. */
+.dimline__item[data-urgent] .dimline__v { font-size: var(--r); color: var(--cad-magenta); }
+.dimline__item[data-urgent] .lbl { color: var(--cad-magenta); }
+.dimline__k { color: var(--muted); margin-left: var(--r-8); }
+.dimline__rule { display: inline-block; width: 24px; height: 1px; background: var(--steel); }
+
+/* Elevation band — allowed to clip past the right frame: a drawing
+   continues off-sheet.
+   Height grows with the tallest bay rather than sitting at a fixed six
+   rosettes: with a four-man morning the fixed band was 90px of empty air on
+   top of everything else, and the screen read as unfinished rather than airy. */
+.elev {
+  min-height: var(--r3); overflow-x: auto; overflow-y: hidden;
+  display: flex; align-items: flex-end;
+  margin-right: calc(-1 * var(--r-2));
+  border-top: 1px solid var(--cad-magenta);   /* outer boundary of the working set */
+  margin-bottom: var(--r-2);
+}
+/* Height is content, not 100%: a bay taller than its stack drew an empty
+   outlined box above the people, which read as a broken widget. */
+.bay { flex: 0 0 auto; border-right: 1px solid var(--steel); display: flex;
+       flex-direction: column; justify-content: flex-end; }
+.bay:first-child { border-left: 1px solid var(--steel); }
+.bay__cell {
+  height: var(--r); padding: 0 var(--r-4);
+  display: flex; align-items: center; justify-content: space-between; gap: var(--r-8);
+  font: 400 13px/1.2 var(--font-mono); letter-spacing: .06em;
+  border-top: 1px solid var(--rule-steel);
   overflow: hidden;
 }
-
-/* Tables scroll inside their panel; the page itself never scrolls sideways. */
-.table-wrap { overflow-x: auto; }
-
-table { border-collapse: collapse; width: 100%; font-size: 14px; }
-
-th {
-  text-align: left;
-  font-size: 12px;
-  letter-spacing: 0.4px;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-  background: var(--surface);
+.bay__cell span:first-child { color: var(--bone); overflow: hidden;
+                              text-overflow: ellipsis; white-space: nowrap; }
+.bay__cell span:last-child  { color: var(--muted); flex: 0 0 auto; }
+/* A 762 bay is 61px. A name and a figure do not both fit, and the name is the
+   one you need — the hours are in the table two hundred pixels below. The
+   padding drops too, or a six-letter surname still ellipsises. */
+.bay[data-narrow] .bay__cell span:last-child { display: none; }
+.bay[data-narrow] .bay__cell { padding: 0 var(--r-8); }
+.bay[data-narrow] .bay__ann  { padding-left: var(--r-8); padding-right: var(--r-8); }
+.bay__cell[data-break] { border-top: 1px dashed var(--cad-yellow); }
+.bay__cell[data-off]   { box-shadow: inset 3px 0 0 var(--cad-magenta); }
+.bay__ann {
+  padding: var(--r-8) var(--r-4) 0;
+  font: 400 11px/1.3 var(--font-mono); letter-spacing: .04em; color: var(--faint);
+  border-top: 1px solid var(--line); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
 }
 
-td { padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
-tbody tr:last-child td { border-bottom: none; }
-tbody tr:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+/* Table and its right-hand column sit side by side.
+   A float here pushed the table down instead of beside it — a <table>
+   establishes a block formatting context and will not overlap a float, so the
+   two `--lift` offsets stacked into 460px of void. */
+.deck { display: flex; align-items: flex-start; gap: var(--r-2); }
+.deck > .sheet { flex: 1 1 auto; min-width: 0; }
 
-.mono { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
-.muted { color: var(--text-muted); }
-.nowrap { white-space: nowrap; }
+/* Rostered, not on. The only right-hand column in the app.
+   Starts one full lift below the table — deliberately misregistered — and
+   bleeds past its last row with no closing rule. */
+.rostered {
+  flex: 0 0 var(--bay-3050); width: var(--bay-3050);
+  margin-top: var(--lift);
+  border-top: 2px solid var(--cad-magenta);
+}
+.rostered__k { padding: var(--r-4) 0; color: var(--cad-magenta); }
+.rostered li {
+  height: 30px; display: flex; align-items: center; justify-content: space-between;
+  gap: var(--r-4);
+  font: 400 13px/1 var(--font-mono); letter-spacing: .06em; color: var(--bone-700);
+}
+.rostered li span:last-child { color: var(--faint); }
 
-.pill {
-  display: inline-block;
-  padding: 3px 9px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
+/* ============================================================================
+   SHT 02 — TIMESHEETS (paper)
+   ========================================================================= */
+
+.title-block {
+  position: sticky; top: 0; z-index: 5;
+  height: 96px; margin: 0 calc(-1 * var(--r-2));
+  padding: 0 var(--r-2);
+  background: var(--paper-200);
+  border-bottom: 3px double var(--ink);
+  display: grid; grid-template-columns: repeat(4, 1fr);
+}
+.title-block__cell {
+  display: flex; flex-direction: column; justify-content: center; gap: var(--r-8);
+  padding: 0 var(--r-4);
+  border-right: 1px solid var(--paper-line);
+}
+.title-block__cell:last-child { border-right: 0; }
+.title-block__k { color: var(--ink-faint); }
+.title-block__v { font-size: 26px; color: var(--ink); }
+.title-block__v[data-hold] { color: var(--cad-yellow-ink); }
+/* Corner ticks overhang by 4px, as they do on a real sheet. */
+.title-block::before, .title-block::after {
+  content: ''; position: absolute; top: -4px; width: 9px; height: 9px;
+  border: 1px solid var(--ink); border-right: 0; border-bottom: 0;
+  pointer-events: none;
+}
+.title-block::before { left: -4px; }
+.title-block::after  { right: -4px; transform: scaleX(-1); }
+
+.paper .sheet thead th {
+  background: var(--paper); color: var(--ink-faint);
+  box-shadow: inset 0 -1px 0 var(--ink); top: 96px;
+}
+.paper .sheet tbody td {
+  height: var(--row-ledger); color: var(--ink-700);
+  border-top-color: var(--paper-line);
+}
+/* A ledger counts in fives. The lift line does not apply here. */
+.paper .sheet tbody tr:nth-child(4n+1) td { border-top-color: var(--paper-line); }
+.paper .sheet tbody tr:nth-child(5n) td   { border-top-color: var(--paper-rule5); }
+.paper .sheet tbody tr:hover td { background: rgba(20,19,15,.05); color: var(--ink); }
+.paper .sheet tbody tr:hover td:first-child { box-shadow: inset 2px 0 0 var(--ink-faint); }
+.paper .sheet td .sub { color: var(--ink-faint); }
+.paper .sheet td.name { color: var(--ink); }
+.paper .sheet tr[data-breach] td:first-child { box-shadow: inset 3px 0 0 var(--cad-magenta-ink); }
+.paper .sheet .empty td { color: var(--ink-faint); }
+
+/* Vertical ledger rules, drawn by a colgroup — track a value across six
+   columns without losing the line. */
+.paper .sheet col { border-right: 1px solid var(--paper-line); }
+
+/* The Odoo id rides alongside the status mark rather than under it. As a
+   `.sub` line it overflowed the 30px ledger row and collided with the next
+   row's rule. */
+.paper .sheet td .beside {
+  margin-left: var(--r-4);
+  font: 400 11px/1 var(--font-mono); letter-spacing: .04em; color: var(--ink-faint);
 }
 
-.pill.ok { background: var(--ok-bg); color: var(--ok); }
-.pill.warn { background: var(--warn-bg); color: var(--warn); }
-.pill.error { background: var(--error-bg); color: var(--error); }
-.pill.info { background: var(--info-bg); color: var(--accent); }
-.pill.neutral { background: color-mix(in srgb, var(--text-muted) 15%, transparent); color: var(--text-muted); }
+.group-band td {
+  height: var(--r) !important;
+  background: linear-gradient(90deg, rgba(76,65,119,.16), transparent 62%);
+  border-top: 2px solid var(--ink) !important;
+}
+.group-band__name { font-size: 26px; color: var(--ink); }
+.group-band__total { font: 500 13px/1 var(--font-mono); letter-spacing: .06em; color: var(--ink); }
+.exc-flag { color: var(--cad-magenta-ink); margin-left: var(--r-8); }
 
-.empty { padding: 48px 20px; text-align: center; color: var(--text-muted); }
+/* ============================================================================
+   SHT 03 — EXCEPTIONS (no table on this screen)
+   ========================================================================= */
 
-form.filters {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  margin-bottom: 16px;
+.counts {
+  display: flex; align-items: baseline; gap: var(--r-2); flex-wrap: wrap;
+  min-height: var(--lift); padding-bottom: var(--r-2);
+}
+.counts__item { display: flex; flex-direction: column; gap: var(--r-8); }
+.counts__high { color: var(--cad-magenta); }
+.counts__med  { font-size: var(--r); color: var(--cad-yellow); }
+.counts__info { font: 400 13px/1 var(--font-mono); letter-spacing: .06em; color: var(--faint); }
+.counts [data-zero="true"] { color: var(--faint); }
+.counts__rule { display: inline-block; width: 24px; height: 1px; background: var(--steel); }
+
+/* One lift between groups was tuned for a bad morning. On a quiet day it left
+   two hundred pixels of void between three items, which reads as a broken
+   page rather than a calm one. Three rosettes still separates the groups
+   clearly and lets a clean day genuinely collapse. */
+.markgroup { margin-bottom: var(--r3); }
+.markgroup__hd {
+  display: flex; align-items: baseline; gap: var(--r-4); flex-wrap: wrap;
+  padding-bottom: var(--r-4);
 }
 
-form.filters label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--text-muted); }
-
-input, select, button {
-  font: inherit;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  min-height: 38px;
+/* HIGH — full-width annotation blocks, generous. */
+.mark {
+  position: relative; border-top: 1px solid var(--cad-magenta);
+  padding: var(--r-2) 0 var(--r-2) var(--r); min-height: 120px;
+}
+.mark__glyph { position: absolute; left: 0; top: var(--r-2);
+               width: 8px; height: 8px; background: var(--cad-magenta); }
+.mark__who  { font-family: var(--font-display); font-variation-settings: 'wdth' 78;
+              font-weight: 600; font-size: 16px; letter-spacing: -.02em; color: var(--bone); }
+.mark__meta { font: 500 11px/1 var(--font-mono); letter-spacing: .14em;
+              text-transform: uppercase; color: var(--muted); margin-top: 6px; }
+.mark__what { font: 400 16px/1.5 var(--font-sans); color: var(--bone-700);
+              max-width: 52ch; margin-top: var(--r-4); }
+/* Guidance hangs in the right margin on a leader line, because that is what it
+   is. Three indents cycled so the margin edge is ragged rather than
+   machine-even — the one deliberate irregularity on this screen. */
+.mark__todo { margin-left: 58%; margin-top: var(--r-4);
+              font: 400 13px/1.5 var(--font-sans); color: var(--muted); max-width: 34ch;
+              position: relative; }
+.mark:nth-child(3n+2) .mark__todo { margin-left: 61%; }
+.mark:nth-child(3n)   .mark__todo { margin-left: 55%; }
+.mark__todo::before {
+  content: ''; position: absolute; left: -28px; top: 9px;
+  width: 22px; height: 1px; background: var(--steel); opacity: .5;
+}
+.mark__todo::after {
+  content: ''; position: absolute; left: -30px; top: 7px;
+  width: 5px; height: 5px; border-radius: 50%; background: var(--steel-lit);
 }
 
-button { cursor: pointer; font-weight: 500; }
-button:hover { border-color: var(--accent); }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-button.primary:hover { filter: brightness(1.08); }
-button:disabled { opacity: 0.5; cursor: not-allowed; }
+/* MEDIUM — a flat two-column grid, half the weight. */
+.medgrid { display: grid; grid-template-columns: repeat(2, 1fr);
+           border-top: 1px solid var(--cad-yellow); }
+.medgrid__item {
+  height: var(--r15); padding: var(--r-4) var(--r-4) var(--r-4) 0;
+  border-bottom: 1px solid var(--rule-steel);
+  display: flex; flex-direction: column; justify-content: center; gap: 4px;
+  overflow: hidden;
+}
+/* :not(:last-child) — a lone item in a two-column grid was drawing a vertical
+   rule into an empty cell, which looked like a half-rendered box. */
+.medgrid__item:nth-child(odd):not(:last-child) {
+  border-right: 1px solid var(--rule-steel); padding-right: var(--r-2); }
+.medgrid__item:nth-child(even) { padding-left: var(--r-2); }
+.medgrid__hd { font: 400 13px/1 var(--font-mono); letter-spacing: .06em; color: var(--bone); }
+.medgrid__msg { font: 400 13px/1.2 var(--font-mono); letter-spacing: .04em; color: var(--muted);
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-details.error-detail summary { cursor: pointer; color: var(--error); }
-details.error-detail pre {
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 12px;
-  background: var(--bg);
-  padding: 10px;
-  border-radius: 8px;
-  margin: 8px 0 0;
-  max-width: 60ch;
+/* INFO — collapses to a single run-on line. Not a details, not a table. */
+.inforun {
+  border-top: 1px solid var(--line);
+  padding-top: var(--r-4);
+  font: 400 13px/1.5 var(--font-mono); letter-spacing: .04em; color: var(--faint);
 }
 
-.banner {
-  padding: 12px 16px;
-  border-radius: var(--radius);
-  margin-bottom: 16px;
-  border: 1px solid var(--border);
+/* Severity minimap — a scroll-position indicator, not a duplicate column. */
+.minimap { position: fixed; right: 0; top: 0; bottom: 0; width: 14px; z-index: 2;
+           pointer-events: none; }
+.minimap i { position: absolute; right: 0; display: block; height: 2px; }
+.minimap i[data-sev="1"] { width: 12px; background: var(--cad-magenta); }
+.minimap i[data-sev="2"] { width: 8px;  background: var(--cad-yellow); }
+
+/* ============================================================================
+   SHT 04 — SITE GEOFENCES (setout)
+
+   The only screen with a live map. Its distinct arrangement is a fixed-width
+   register beside a full-height plan — no table, no stat strip, no diagram
+   drawn from data.
+   ========================================================================= */
+
+.setout-counts {
+  display: flex; align-items: baseline; gap: var(--r-2);
+  padding: var(--r-2) 0;
 }
-.banner.warn { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
-.banner.error { background: var(--error-bg); color: var(--error); border-color: transparent; }
 
 .sites-layout {
   display: grid;
-  grid-template-columns: minmax(260px, 320px) 1fr;
-  gap: 16px;
-  height: calc(100vh - 220px);
-  min-height: 480px;
+  grid-template-columns: var(--bay-3050) 1fr;
+  gap: var(--r-2);
+  height: calc(100vh - 320px);
+  min-height: 420px;
+  border-top: 1px solid var(--line-strong);
 }
 
-.sites-list { overflow-y: auto; padding: 4px; }
+.sites-list { overflow-y: auto; border-right: 1px solid var(--line); }
 
 .site-row {
-  padding: 12px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  padding: var(--r-4) var(--r-2) var(--r-4) 0;
+  border-bottom: 1px solid var(--rule-steel);
+  display: flex; flex-direction: column; gap: var(--r-8);
 }
 .site-row:last-child { border-bottom: none; }
+/* In hand — moved but not saved. Same 3px edge the tables use for a hold. */
+.site-row[data-hold] { box-shadow: inset 3px 0 0 var(--cad-yellow); padding-left: var(--r-4); }
 
-.site-row-header { display: flex; align-items: center; gap: 8px; }
-
-.site-row-controls { display: flex; align-items: flex-end; gap: 8px; }
-.site-row-controls label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 13px;
-  color: var(--text-muted);
+.site-row-header { display: flex; align-items: center; gap: var(--r-8); flex-wrap: wrap; }
+.site-row-name {
+  font: 500 13px/1.2 var(--font-mono); letter-spacing: .06em; color: var(--bone);
 }
-.site-row-controls input { width: 90px; }
+.site-row-meta {
+  font: 400 11px/1.4 var(--font-mono); letter-spacing: .04em; color: var(--faint);
+}
 
-.sites-map-panel { overflow: hidden; }
+.site-row-controls { display: flex; align-items: flex-end; gap: var(--r-4); }
+.site-row-controls label {
+  display: flex; flex-direction: column; gap: var(--r-8); color: var(--muted);
+}
+.site-row-controls input {
+  width: 72px; appearance: none;
+  background: transparent; color: var(--bone);
+  border: 1px solid transparent; border-bottom-color: var(--muted);
+  font: 500 13px var(--font-mono); letter-spacing: .06em;
+  padding: 3px 4px;
+}
+.site-row-controls input:hover { border-bottom-color: var(--bone); }
+.site-row-controls input:focus-visible { border-color: var(--cad-yellow); }
+
+.sites-map-panel { overflow: hidden; border-left: 1px solid var(--line); }
 
 /* Leaflet's own CSS assumes it is loaded before the map paints; make sure
    panes always have the size the container gives them. */
-.leaflet-container { height: 100%; width: 100%; background: var(--bg); }
+.leaflet-container {
+  height: 100%; width: 100%; background: var(--canvas-100);
+  font-family: var(--font-mono);
+}
+/* Stock OSM tiles are a bright white sheet in the middle of a dark drawing.
+   Inverting and re-rotating the hue turns them into a dark plan without
+   needing a paid tile provider; the pins and fences are drawn above this and
+   are unaffected. */
+.leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg) brightness(.86) contrast(.92) saturate(.5);
+}
+.leaflet-container .leaflet-control-attribution {
+  background: rgba(15,14,12,.75); color: var(--faint);
+  font: 400 10px/1.4 var(--font-mono);
+}
+.leaflet-container .leaflet-control-attribution a { color: var(--steel-lit); }
+.leaflet-bar a {
+  background: var(--canvas-200); color: var(--bone);
+  border-bottom-color: var(--line);
+}
+.leaflet-bar a:hover { background: var(--canvas-100); color: var(--bone); }
+.site-pin { background: none; border: 0; }
+
+/* ============================================================================
+   SHT 05 — ODOO SYNC
+   ========================================================================= */
+
+/* Runs under the rail, edge to edge. Negative margins, not 100vw — 100vw
+   includes the scrollbar and overflows the body. */
+.hazard {
+  margin-left: calc(-1 * (var(--bay-2438) + var(--r-2)));
+  margin-right: calc(-1 * var(--r-2));
+  margin-bottom: var(--r-2);
+  height: 60px; display: flex; align-items: center;
+  padding-left: calc(var(--bay-2438) + var(--r-2)); padding-right: var(--r-2);
+  background-color: var(--canvas-100);
+  background-image: repeating-linear-gradient(45deg,
+      rgba(255,61,154,.14) 0 2px, transparent 2px 9px);
+  border-top: 1px solid var(--cad-magenta);
+  border-bottom: 1px solid var(--cad-magenta);
+  font: 400 16px/1.4 var(--font-sans); color: var(--bone);
+}
+.hazard strong { font-weight: 600; }
+
+.loadbar { display: flex; height: 12px; width: 100%; margin-top: var(--r-2); }
+.loadbar i { display: block; transition: flex-grow 400ms var(--ease); }
+.loadbar i[data-seg="pending"]  { background: var(--steel); }
+.loadbar i[data-seg="running"]  { background: var(--steel-lit); }
+.loadbar i[data-seg="success"]  { background: var(--cad-green); }
+.loadbar i[data-seg="failed"]   { background: var(--cad-yellow); }
+.loadbar i[data-seg="dead"]     { background: var(--cad-magenta); }
+
+/* The legend does not move. A legend you must re-read after every refresh has
+   stopped being a legend. */
+.legend { display: flex; justify-content: space-between; gap: var(--r-4);
+          padding: var(--r-4) 0 var(--r3); }
+.legend div { display: flex; align-items: baseline; gap: var(--r-8); }
+.legend .n { font: 400 13px/1 var(--font-mono); letter-spacing: .06em; color: var(--bone-700); }
+.legend .lbl { color: var(--muted); }
+
+/* Error console sub-rows. Always open — <details> hides the one thing this
+   screen exists for. */
+.console td {
+  height: auto;
+  background: var(--canvas-100);
+  border-left: 3px solid var(--cad-magenta);
+  border-top: 0;
+  padding: var(--r-4) var(--r-4) var(--r-4) var(--r);
+  font: 400 12px/1.5 var(--font-mono); letter-spacing: 0;
+  color: #d9c9d4;
+  white-space: pre-wrap; word-break: break-word;
+  overflow: visible;
+}
+.console .next {
+  display: block; margin-top: 6px; color: var(--faint);
+  font: 500 11px/1 var(--font-mono); letter-spacing: .14em; text-transform: uppercase;
+}
+.sheet tbody tr.console:hover td { background: var(--canvas-100); color: #d9c9d4; }
+
+/* ============================================================================
+   MOTION — one ease, three durations. Deliberately faster than Whiteframe:
+   this gets clicked three hundred times a day, it is not read once.
+   140ms colour · 220ms surfaces · 400ms the load bar.
+   NO scroll-entrance animation anywhere. Fading a payroll table in as you
+   scroll is hostile.
+   ========================================================================= */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --rule-steel: rgba(96,120,152,.30);
+    --line: #3a3733;
+    --faint: #9a948a;
+    --paper-line: #b9b3a6;
+  }
+}
+
+/* ============================================================================
+   RESPONSIVE
+   ========================================================================= */
+
+@media (max-width: 1240px) {
+  .rail { width: var(--bay-762); }
+  .rail__mark { padding: var(--r-4); }
+  .rail__mark img { width: 41px; }
+  .rail__word, .rail__foot { display: none; }
+  .rail nav a { font-size: 0; padding-left: 0; text-align: center; border-left-width: 4px; }
+  .rail nav a::after { float: none; padding: 0; font-size: 11px; letter-spacing: .06em; }
+  main { margin-left: var(--bay-762); }
+  .hazard {
+    margin-left: calc(-1 * (var(--bay-762) + var(--r-2)));
+    padding-left: calc(var(--bay-762) + var(--r-2));
+  }
+}
+
+@media (max-width: 900px) {
+  .rail {
+    inset: 0 0 auto 0; width: auto; height: var(--r);
+    flex-direction: row; align-items: center;
+    border-right: 0; border-bottom: 1px solid var(--line);
+  }
+  .rail__mark { padding: 0 var(--r-2); }
+  .rail__mark img { width: 88px; }
+  .rail nav { display: flex; border-top: 0; }
+  .rail nav a { border-left: 0; border-bottom: 3px solid transparent;
+                padding: 0 var(--r-4); font-size: 0; }
+  .rail nav a[aria-current="page"] { border-bottom-color: var(--bone);
+                                     border-left-color: transparent; }
+  main { margin-left: 0; margin-top: var(--r); border-left: 0; }
+  .hazard { margin-left: calc(-1 * var(--r-2)); padding-left: var(--r-2); }
+  .sheet col.opt, .sheet th.opt, .sheet td.opt { display: none; }  /* fold to 4 cols */
+  .deck { flex-direction: column; }
+  .rostered { flex: 1 1 auto; width: 100%; margin-top: var(--r-2); }
+  .medgrid { grid-template-columns: 1fr; }
+  .medgrid__item:nth-child(odd) { border-right: 0; padding-right: 0; }
+  .medgrid__item:nth-child(even) { padding-left: 0; }
+  .mark__todo, .mark:nth-child(3n+2) .mark__todo, .mark:nth-child(3n) .mark__todo {
+    margin-left: 0; max-width: 52ch; }
+  .mark__todo::before, .mark__todo::after { display: none; }
+  .title-block { grid-template-columns: repeat(2, 1fr); height: auto; padding: var(--r-4) var(--r-2); }
+  .minimap { display: none; }
+}

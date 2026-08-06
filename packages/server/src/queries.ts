@@ -286,6 +286,76 @@ export async function getWorkingNow(
   return out.sort((a, b) => a.employeeName.localeCompare(b.employeeName));
 }
 
+// --- admin: rostered but not on ---------------------------------------------
+
+export interface RosteredNotOnRow {
+  employeeId: string;
+  employeeName: string;
+  jobNumber: string | null;
+  siteName: string | null;
+  scheduledStart: string | null;
+}
+
+/**
+ * Who was expected today and has not clocked on.
+ *
+ * Arguably the more important half of "working now": `getWorkingNow` can only
+ * ever show people who turned up, so a no-show is invisible in it.
+ *
+ * The exclusion window is the rostered day itself, not a rolling 48 hours.
+ * A 48-hour window silently hides anyone who worked yesterday — which is
+ * almost everybody — so the list came back empty every time. Callers filter
+ * out anyone currently mid-shift, which is what keeps a night crew that
+ * started yesterday from being reported absent today.
+ */
+export async function getRosteredNotOn(
+  db: Db,
+  args: { companyId: string; workDate: string; now?: Date },
+): Promise<RosteredNotOnRow[]> {
+  const since = `${args.workDate}T00:00:00`;
+
+  const { rows } = await db.query<{
+    employee_id: string;
+    full_name: string;
+    job_number: string | null;
+    site_name: string | null;
+    scheduled_start: Date | null;
+  }>(
+    `select distinct on (e.id)
+            e.id as employee_id, e.full_name, j.job_number,
+            s.name as site_name, a.scheduled_start
+       from assignment a
+       join job j on j.id = a.job_id
+       left join site s on s.id = j.site_id
+       join employee e
+         on e.id = a.employee_id
+         or e.id in (select cm.employee_id from crew_member cm
+                      where cm.crew_id = a.crew_id and cm.active)
+      where a.company_id = $1
+        and a.work_date = $2
+        and e.active
+        and not exists (
+          select 1 from attendance_event ae
+           where ae.employee_id = e.id
+             and ae.voided_at is null
+             and ae.event_type = 'clock_in'
+             and ae.device_time >= $3
+        )
+      order by e.id, a.scheduled_start asc nulls last`,
+    [args.companyId, args.workDate, since],
+  );
+
+  return rows
+    .map((r) => ({
+      employeeId: r.employee_id,
+      employeeName: r.full_name,
+      jobNumber: r.job_number,
+      siteName: r.site_name,
+      scheduledStart: iso(r.scheduled_start),
+    }))
+    .sort((a, b) => a.employeeName.localeCompare(b.employeeName));
+}
+
 // --- admin: timesheets ------------------------------------------------------
 
 export interface TimesheetFilter {

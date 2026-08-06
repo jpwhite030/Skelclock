@@ -34,8 +34,13 @@ function pinIcon(color: string): L.DivIcon {
   });
 }
 
-const SAVED_ICON = pinIcon('#1d4ed8');
-const DIRTY_ICON = pinIcon('#b45309');
+/* SETOUT legend, not stock swatches: steel is the recorded colour of the gear
+   and marks a fence that is set; yellow means "in hand" — moved, not saved. */
+const STEEL = '#8aaac8';
+const IN_HAND = '#ffcf2e';
+
+const SAVED_ICON = pinIcon(STEEL);
+const DIRTY_ICON = pinIcon(IN_HAND);
 
 const DEFAULT_CENTER: LatLngExpression = [-34.4248, 150.8931]; // Wollongong — SkelScaff's patch
 
@@ -130,26 +135,26 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
 
   return (
     <div className="sites-layout">
-      <div className="panel sites-list">
+      <div className="sites-list">
         {sites.map((site) => {
           const draft = drafts[site.id];
           const result = results[site.id];
           return (
-            <div key={site.id} className="site-row">
+            <div key={site.id} className="site-row" data-hold={draft?.dirty ? '' : undefined}>
               <div className="site-row-header">
-                <strong>{site.name}</strong>
-                {draft?.dirty && <span className="pill warn">Moved</span>}
-                {!draft && <span className="pill neutral">No pin</span>}
+                <span className="site-row-name">{site.name}</span>
+                {draft?.dirty && <span className="mk mk-setout">Moved</span>}
+                {!draft && <span className="mk mk-setout">No pin</span>}
               </div>
-              {site.address && <div className="muted">{site.address}</div>}
-              <div className="muted">
+              {site.address && <div className="site-row-meta">{site.address}</div>}
+              <div className="site-row-meta">
                 {site.jobCount} active job{site.jobCount === 1 ? '' : 's'}
               </div>
 
               {canEdit && draft && (
                 <div className="site-row-controls">
-                  <label>
-                    Radius (m)
+                  <label className="lbl">
+                    Radius m
                     <input
                       type="number"
                       min={10}
@@ -159,7 +164,7 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
                     />
                   </label>
                   <button
-                    className="primary"
+                    className="btn"
                     disabled={!draft.dirty || (pending && savingId === site.id)}
                     onClick={() => save(site.id)}
                   >
@@ -170,6 +175,8 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
 
               {canEdit && !draft && (
                 <button
+                  className="act"
+                  data-busy={armedSiteId === site.id ? '' : undefined}
                   disabled={armedSiteId === site.id}
                   onClick={() => setArmedSiteId(site.id)}
                 >
@@ -178,15 +185,21 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
               )}
 
               {result && (
-                <span className={`pill ${result.ok ? 'ok' : 'error'}`}>{result.message}</span>
+                <span className={`mk ${result.ok ? 'mk-approved' : 'mk-breach'}`}>
+                  {result.message}
+                </span>
               )}
             </div>
           );
         })}
-        {sites.length === 0 && <div className="empty">No sites yet.</div>}
+        {sites.length === 0 && (
+          <div className="site-row site-row-meta">
+            No sites yet. They arrive with the next job import from Odoo.
+          </div>
+        )}
       </div>
 
-      <div className="panel sites-map-panel">
+      <div className="sites-map-panel">
         <MapContainer center={center} zoom={12} scrollWheelZoom style={{ height: '100%', width: '100%' }}>
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -202,7 +215,11 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
                 <Circle
                   center={position}
                   radius={draft.geofenceRadiusM}
-                  pathOptions={{ color: draft.dirty ? '#b45309' : '#1d4ed8', fillOpacity: 0.08 }}
+                  pathOptions={{
+                    color: draft.dirty ? IN_HAND : STEEL,
+                    fillOpacity: 0.08,
+                    weight: 1,
+                  }}
                 />
                 <Marker
                   position={position}
