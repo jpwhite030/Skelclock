@@ -66,6 +66,33 @@ export default function ClockScreen() {
   const promptSuggestion = useCallback(
     (suggestion: PendingSuggestionDto) => {
       const action = suggestion.eventType === 'clock_in' ? 'clocking in' : 'clocking out';
+
+      // Two (or more) sites matched at once - the phone genuinely does not
+      // know which one, so the worker picks rather than the app guessing.
+      if (suggestion.candidateJobIds && suggestion.candidateJobIds.length > 1) {
+        const candidates = suggestion.candidateJobIds.map(
+          (id) => state.jobs.find((j) => j.id === id) ?? { id, siteName: null, jobNumber: id },
+        );
+        Alert.alert(
+          'Which site?',
+          `You ${suggestion.eventType === 'clock_in' ? 'arrived near' : 'left near'} ${
+            candidates.length
+          } job sites at once at ${formatTime(suggestion.deviceTime)}. Which one were you ${action.replace('ing', 'ing at')}?`,
+          [
+            ...candidates.map((c) => ({
+              text: c.siteName ?? `Job ${c.jobNumber}`,
+              onPress: () => void confirmSuggestion(suggestion.id, c.id),
+            })),
+            {
+              text: "Neither — wasn't me",
+              style: 'destructive' as const,
+              onPress: () => void dismissSuggestion(suggestion.id, 'Worker said this was not them'),
+            },
+          ],
+        );
+        return;
+      }
+
       Alert.alert(
         'Confirm your clock',
         `Looks like you ${suggestion.eventType === 'clock_in' ? 'arrived at' : 'left'} ${
@@ -84,21 +111,44 @@ export default function ClockScreen() {
         ],
       );
     },
-    [confirmSuggestion, dismissSuggestion],
+    [confirmSuggestion, dismissSuggestion, state.jobs],
   );
 
   const onToggleAutoDetect = useCallback(
     async (next: boolean) => {
-      try {
-        await toggleAutoDetect(next);
-      } catch (err) {
-        Alert.alert(
-          "Couldn't turn that on",
-          err instanceof Error
-            ? err.message
-            : 'Location permission is needed for auto-detect to work.',
-        );
+      if (!next) {
+        await toggleAutoDetect(false).catch(() => undefined);
+        return;
       }
+
+      // Explicit, specific consent before background tracking starts - the OS
+      // permission dialogs are generic and worded once, at install; this is
+      // SkelClock's own notice, shown every time, and toggleAutoDetect logs
+      // agreeing to it as the audit trail behind that.
+      Alert.alert(
+        'Turn on auto-detect?',
+        "SkelClock will check your location in the background — even with the app closed — to notice when you arrive at or leave an assigned job site. A clear, on-site reading clocks you in or out automatically; anything less certain still asks you to confirm. Turn it off anytime and the tracking stops immediately.",
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Turn it on',
+            onPress: () => {
+              void (async () => {
+                try {
+                  await toggleAutoDetect(true);
+                } catch (err) {
+                  Alert.alert(
+                    "Couldn't turn that on",
+                    err instanceof Error
+                      ? err.message
+                      : 'Location permission is needed for auto-detect to work.',
+                  );
+                }
+              })();
+            },
+          },
+        ],
+      );
     },
     [toggleAutoDetect],
   );
@@ -240,6 +290,7 @@ export default function ClockScreen() {
         <Text style={styles.hours}>{home?.hoursWorkedLabel ?? '0h 00m'}</Text>
         <Text style={styles.muted}>
           worked today{home && home.breakMinutes > 0 ? ` · ${home.breakMinutes}m break` : ''}
+          {home && home.autoLunchMinutes > 0 ? ` · ${home.autoLunchMinutes}m lunch auto-deducted` : ''}
         </Text>
       </View>
 
@@ -334,9 +385,9 @@ export default function ClockScreen() {
           <View style={styles.autoDetectText}>
             <Text style={styles.label}>AUTO-DETECT ARRIVAL</Text>
             <Text style={styles.muted}>
-              Suggest a clock-in/out when your phone notices you've arrived at or left a job
-              site — even if SkelClock isn't open. Every suggestion needs your confirmation
-              before it counts.
+              Clock you in or out automatically when your phone notices you've arrived at or
+              left a job site — even if SkelClock isn't open. Anything the phone isn't sure
+              about still asks you to confirm first.
             </Text>
           </View>
           <Pressable
@@ -348,15 +399,32 @@ export default function ClockScreen() {
             <View style={[styles.toggleKnob, state.autoDetectEnabled && styles.toggleKnobOn]} />
           </Pressable>
         </View>
+
+        {state.permissionHealth === 'needs_attention' && (
+          <Pressable onPress={() => void onToggleAutoDetect(true)}>
+            <Text style={styles.pendingBad}>
+              Auto-detect stopped working — location permission was turned off somewhere else
+              on this phone. Tap to fix it.
+            </Text>
+          </Pressable>
+        )}
+
+        {state.autoDetectEnabled && state.autoDetectTruncated && (
+          <Text style={styles.muted}>
+            You're assigned to more sites than one phone can watch at once — only some are
+            covered. Manual clock-in still works everywhere.
+          </Text>
+        )}
       </View>
 
       <View style={styles.card}>
         <Text style={styles.label}>PRIVACY</Text>
         <Text style={styles.muted}>
           Your location is recorded when you clock on and clock off. If you turn on auto-detect
-          above, SkelClock also checks your location in the background to suggest a clock event
-          near a job site — you can turn it off any time, and it never clocks you on or off by
-          itself without you confirming.
+          above, SkelClock also checks your location in the background near a job site — a
+          confident, on-site reading clocks you in or out by itself, and anything less certain
+          asks you to confirm instead. You can turn it off any time, and the tracking stops
+          immediately.
         </Text>
       </View>
 

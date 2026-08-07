@@ -19,6 +19,7 @@
  */
 
 import type { AttendanceEventType, ClockMethod } from '@skelclock/core';
+import type { IngestOutcomeDto } from '@skelclock/contracts';
 
 export type QueueItemStatus = 'pending' | 'syncing' | 'synced' | 'rejected';
 
@@ -37,6 +38,8 @@ export interface QueuedEvent {
   clockMethod: ClockMethod;
   wasOffline: boolean;
   deviceId: string;
+  /** Auto-geofence only: every assigned job whose fence the fix fell inside. */
+  candidateJobIds?: string[] | null;
   status: QueueItemStatus;
   attempts: number;
   lastError: string | null;
@@ -56,13 +59,7 @@ export interface QueueStore {
   countByStatus(status: QueueItemStatus): Promise<number>;
 }
 
-/** What the server said about one event. Mirrors IngestOutcome server-side. */
-export interface IngestOutcomeDto {
-  idempotencyKey: string;
-  status: 'created' | 'duplicate' | 'rejected';
-  code?: string;
-  message?: string;
-}
+export type { IngestOutcomeDto };
 
 export interface Transport {
   submit(events: QueuedEvent[]): Promise<IngestOutcomeDto[]>;
@@ -75,6 +72,13 @@ export interface FlushResult {
   /** True when the flush stopped because the network was unavailable. */
   offline: boolean;
   rejections: Array<{ idempotencyKey: string; code: string; message: string }>;
+  /**
+   * Detail for events the server newly created (not 'duplicate'), keyed by
+   * idempotency key — lets a caller that enqueued exactly one event, like the
+   * geofence task, find out what happened to it without reaching into the
+   * queue's internals.
+   */
+  created: Array<{ idempotencyKey: string; autoConfirmed: boolean }>;
 }
 
 /**
@@ -133,6 +137,7 @@ export class EventQueue {
       rejected: 0,
       offline: false,
       rejections: [],
+      created: [],
     };
     if (batch.length === 0) return result;
 
@@ -179,6 +184,12 @@ export class EventQueue {
       if (outcome.status === 'created' || outcome.status === 'duplicate') {
         await this.store.delete(item.idempotencyKey);
         result.accepted += 1;
+        if (outcome.status === 'created') {
+          result.created.push({
+            idempotencyKey: item.idempotencyKey,
+            autoConfirmed: outcome.autoConfirmed,
+          });
+        }
         continue;
       }
 

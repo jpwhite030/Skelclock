@@ -12,7 +12,7 @@
       "bundleIdentifier": "au.com.skelscaff.skelclock",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "SkelClock records where you are when you clock on and off, so your hours can be matched to the right job.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "If you turn on auto-detect arrival, SkelClock checks your location in the background to suggest a clock-in when you reach a job site. This is off by default, you can turn it off anytime, and every automatic suggestion needs your confirmation before it counts as a real clock event."
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "If you turn on auto-detect arrival, SkelClock checks your location in the background to clock you in or out when you reach a job site. This is off by default, you can turn it off anytime, and anything the phone isn't confident about still asks you to confirm before it counts."
       }
     },
     "android": {
@@ -30,7 +30,7 @@
         "expo-location",
         {
           "locationWhenInUsePermission": "SkelClock records where you are when you clock on and off, so your hours can be matched to the right job.",
-          "locationAlwaysAndWhenInUsePermission": "If you turn on auto-detect arrival, SkelClock checks your location in the background to suggest a clock-in when you reach a job site. This is off by default, you can turn it off anytime, and every automatic suggestion needs your confirmation before it counts as a real clock event.",
+          "locationAlwaysAndWhenInUsePermission": "If you turn on auto-detect arrival, SkelClock checks your location in the background to clock you in or out when you reach a job site. This is off by default, you can turn it off anytime, and anything the phone isn't confident about still asks you to confirm before it counts.",
           "isIosBackgroundLocationEnabled": true,
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true

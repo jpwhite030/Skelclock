@@ -4,6 +4,14 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import type { Session } from '@supabase/supabase-js';
 
+// Side-effect only: registers TaskManager.defineTask(GEOFENCE_TASK_NAME, ...)
+// at the true app entry, unconditionally. It already runs whenever useClock
+// (mounted from app/index.tsx) pulls it in transitively, but a background
+// geofence trigger can relaunch the app headless — via a path that may not
+// render index.tsx first — and the OS needs the task already registered the
+// moment that JS context finishes evaluating. Importing it here, outside any
+// component, is the belt-and-suspenders placement Expo's own docs recommend.
+import '../src/geofence';
 import { supabase } from '../src/supabase';
 import { colors } from '../src/theme';
 
