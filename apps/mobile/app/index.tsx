@@ -16,7 +16,7 @@
  *   yellow  still in hand   → on a break, queued, awaiting a confirmation
  *   magenta crossed a line  → off-site, rejected, refused
  *
- * Magenta is deliberately not used for the Clock Off button. Knocking off is
+ * Magenta is deliberately not used for the Knock Off button. Knocking off is
  * not an exception, and spending the exception colour on the most-pressed
  * control on the screen would leave nothing left to say when something has
  * genuinely crossed a line.
@@ -40,6 +40,7 @@ import type { AttendanceEventType } from '@skelclock/core';
 import type { PendingSuggestionDto } from '../src/api';
 import { useClock, type PressOptions } from '../src/useClock';
 import { SitePlan } from '../src/site-plan';
+import { SiteMap } from '../src/site-map';
 import { describeProblem } from '../src/location';
 import { getSession, signOut } from '../src/auth';
 import { colors, r, type as t, MIN_TAP } from '../src/theme';
@@ -61,7 +62,6 @@ export default function ClockScreen() {
     sync,
     checkGeofence,
     dismissBanner,
-    toggleAutoDetect,
     confirmSuggestion,
     dismissSuggestion,
   } = useClock(employeeId);
@@ -105,22 +105,6 @@ export default function ClockScreen() {
     [confirmSuggestion, dismissSuggestion],
   );
 
-  const onToggleAutoDetect = useCallback(
-    async (next: boolean) => {
-      try {
-        await toggleAutoDetect(next);
-      } catch (err) {
-        Alert.alert(
-          "Couldn't turn that on",
-          err instanceof Error
-            ? err.message
-            : 'Location permission is needed for auto-detect to work.',
-        );
-      }
-    },
-    [toggleAutoDetect],
-  );
-
   /**
    * Runs a clock event, asking for a reason first if the worker is outside the
    * fence. "Clock on anyway" is always available — the brief is explicit that
@@ -138,36 +122,55 @@ export default function ClockScreen() {
           return;
         }
 
-        const { fix, prompt } = await checkGeofence(options.jobId ?? jobId);
+        const check = await checkGeofence(options.jobId ?? jobId);
+        const away = formatDistance(check.distanceM ?? 0);
+        const where = check.siteName ?? 'the site';
 
-        if (!prompt) {
-          const result = await press(eventType, { ...options, jobId: options.jobId ?? jobId }, fix);
-          if (!result.ok) Alert.alert('Cannot do that yet', result.message);
+        if (check.blocked) {
+          // Clocking ON is refused off-site. Clocking OFF never is: a worker
+          // who has already left must always be able to end their shift, or
+          // the fence traps them on the clock and the hours run all night.
+          if (eventType === 'clock_in') {
+            Alert.alert(
+              'You are outside the site',
+              `You are about ${away} from ${where}, and you have to be on site to clock on.\n\n` +
+                'If you are on site and this is wrong, tell your supervisor — the site boundary ' +
+                'may need moving.',
+            );
+            return;
+          }
+
+          Alert.alert(
+            'You are away from the site',
+            `You are about ${away} from ${where}. You can still knock off — your supervisor ` +
+              'will just be asked to confirm it.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Knock off anyway',
+                onPress: () => {
+                  void press(
+                    eventType,
+                    {
+                      ...options,
+                      jobId: options.jobId ?? jobId,
+                      outsideReason: `Worker confirmed off-site clock, ${Math.round(check.distanceM ?? 0)}m away`,
+                    },
+                    check.fix,
+                  );
+                },
+              },
+            ],
+          );
           return;
         }
 
-        Alert.alert(
-          'You are away from the site',
-          `You are about ${formatDistance(prompt.distanceM)} from ${prompt.siteName ?? 'the site'}. ` +
-            'You can still clock on — your supervisor will just be asked to confirm it.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Clock on anyway',
-              onPress: () => {
-                void press(
-                  eventType,
-                  {
-                    ...options,
-                    jobId: options.jobId ?? jobId,
-                    outsideReason: `Worker confirmed off-site clock, ${prompt.distanceM}m away`,
-                  },
-                  fix,
-                );
-              },
-            },
-          ],
+        const result = await press(
+          eventType,
+          { ...options, jobId: options.jobId ?? jobId },
+          check.fix,
         );
+        if (!result.ok) Alert.alert('Cannot do that yet', result.message);
       } finally {
         setBusy(false);
       }
@@ -209,7 +212,7 @@ export default function ClockScreen() {
     );
   }
 
-  const { home, clockState, availableActions, pending, online, syncing } = state;
+  const { home, clockState, availableActions, online, syncing } = state;
   const canClockIn = availableActions.includes('clock_in');
   const canClockOut = availableActions.includes('clock_out');
   const canStartBreak = availableActions.includes('break_start');
@@ -250,23 +253,67 @@ export default function ClockScreen() {
           </Pressable>
         )}
 
-        <ConnectionStrip online={online} pending={pending.length} syncing={syncing} />
+        {/*
+          The map leads the sheet. Customer and address ride on it rather than
+          under it, so the first thing on screen answers "which site, and am I
+          on it" in one look.
+        */}
+        {home?.assignedJob && (
+          <View style={styles.mapBlock}>
+            {(() => {
+              const site =
+                home.assignedJob.latitude != null && home.assignedJob.longitude != null
+                  ? {
+                      latitude: home.assignedJob.latitude,
+                      longitude: home.assignedJob.longitude,
+                    }
+                  : null;
+              const fix =
+                state.lastFix?.latitude != null && state.lastFix.longitude != null
+                  ? {
+                      latitude: state.lastFix.latitude,
+                      longitude: state.lastFix.longitude,
+                      accuracyM: state.lastFix.accuracyM,
+                    }
+                  : null;
 
-        {/* The job, as a title-block schedule rather than a card. */}
+              // Tiles need the network. With no reception the map is a grey
+              // rectangle, which is worse than useless on the one screen a
+              // worker needs when they are somewhere without signal — so the
+              // drawn plan takes over, and it needs nothing but the numbers
+              // the app already has.
+              return online && site ? (
+                <SiteMap
+                  siteName={home.assignedJob.siteName}
+                  customerName={home.assignedJob.customerName}
+                  siteAddress={home.assignedJob.siteAddress}
+                  site={site}
+                  radiusM={home.assignedJob.geofenceRadiusM}
+                  fix={fix}
+                  live={clockState !== 'off'}
+                />
+              ) : (
+                <View style={styles.planInset}>
+                  <SitePlan
+                    siteName={home.assignedJob.siteName}
+                    customerName={home.assignedJob.customerName}
+                    siteAddress={home.assignedJob.siteAddress}
+                    site={site}
+                    radiusM={home.assignedJob.geofenceRadiusM}
+                    fix={fix}
+                    fixAt={state.lastFixAt}
+                  />
+                </View>
+              );
+            })()}
+          </View>
+        )}
+
+        {/* What the plate does not carry: the job number and the start time. */}
         <View style={styles.block}>
           {home?.assignedJob ? (
             <>
               <Datum label="Job" value={home.assignedJob.jobNumber} strong />
-              {home.assignedJob.customerName && (
-                <Datum label="Customer" value={home.assignedJob.customerName} stacked />
-              )}
-              <Datum
-                label="Site"
-                value={
-                  home.assignedJob.siteAddress ?? home.assignedJob.siteName ?? 'No address on file'
-                }
-                stacked
-              />
               {home.assignedJob.scheduledStart && (
                 <Datum label="Start" value={formatTime(home.assignedJob.scheduledStart)} />
               )}
@@ -306,7 +353,7 @@ export default function ClockScreen() {
 
         {canClockOut && (
           <ClockBand
-            label="Clock off"
+            label="Knock off"
             ground={colors.ink}
             disabled={busy}
             onPress={() =>
@@ -338,136 +385,26 @@ export default function ClockScreen() {
         )}
 
         {home?.assignedJob && (
-          <View style={styles.planBlock}>
-            <SitePlan
-              siteName={home.assignedJob.siteName}
-              site={
-                home.assignedJob.latitude != null && home.assignedJob.longitude != null
-                  ? {
-                      latitude: home.assignedJob.latitude,
-                      longitude: home.assignedJob.longitude,
-                    }
-                  : null
-              }
-              radiusM={home.assignedJob.geofenceRadiusM}
-              fix={
-                state.lastFix?.latitude != null && state.lastFix.longitude != null
-                  ? {
-                      latitude: state.lastFix.latitude,
-                      longitude: state.lastFix.longitude,
-                      accuracyM: state.lastFix.accuracyM,
-                    }
-                  : null
-              }
-              fixAt={state.lastFixAt}
-            />
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ disabled: locating }}
-              disabled={locating}
-              onPress={() => void locate()}
-              style={({ pressed }) => [
-                styles.ghost,
-                { opacity: locating ? 0.45 : 1 },
-                pressed && styles.ghostPressed,
-              ]}
-            >
-              {locating ? (
-                <ActivityIndicator size="small" color={colors.ink} />
-              ) : (
-                <Text style={styles.ghostText}>
-                  {state.lastFix ? 'Check again' : 'Check my position'}
-                </Text>
-              )}
-            </Pressable>
-          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ disabled: locating }}
+            disabled={locating}
+            onPress={() => void locate()}
+            style={({ pressed }) => [
+              styles.ghost,
+              { opacity: locating ? 0.45 : 1 },
+              pressed && styles.ghostPressed,
+            ]}
+          >
+            {locating ? (
+              <ActivityIndicator size="small" color={colors.ink} />
+            ) : (
+              <Text style={styles.ghostText}>
+                {state.lastFix ? 'Check again' : 'Check my position'}
+              </Text>
+            )}
+          </Pressable>
         )}
-
-        {clockState !== 'off' && state.activities.length > 0 && (
-          <Section label="What are you doing">
-            <View style={styles.cells}>
-              {state.activities.map((activity) => {
-                const selected = home?.currentActivityId === activity.id;
-                return (
-                  <Pressable
-                    key={activity.id}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected }}
-                    disabled={busy}
-                    onPress={() =>
-                      void runClockEvent('activity_change', { workActivityId: activity.id })
-                    }
-                    style={({ pressed }) => [
-                      styles.cell,
-                      // Yellow is the inner face — the work still in hand. The
-                      // activity you are on right now is exactly that.
-                      selected && styles.cellOn,
-                      pressed && styles.cellPressed,
-                    ]}
-                  >
-                    <Text style={[styles.cellText, selected && styles.cellTextOn]}>
-                      {activity.name}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </Section>
-        )}
-
-        {pending.length > 0 && (
-          <Section label={`Waiting to send · ${pending.length}`}>
-            {pending.map((item, i) => {
-              const rejected = item.status === 'rejected';
-              return (
-                <View
-                  key={item.idempotencyKey}
-                  style={[styles.queueRow, (i + 1) % 5 === 0 && styles.rule5]}
-                >
-                  <Text style={styles.queueEvent}>{labelForEvent(item.eventType)}</Text>
-                  <Text style={styles.queueTime}>{formatTime(item.deviceTime)}</Text>
-                  <Text
-                    style={[styles.queueState, rejected && styles.queueBad]}
-                    numberOfLines={1}
-                  >
-                    {rejected ? (item.lastError ?? 'Rejected') : 'Queued'}
-                  </Text>
-                </View>
-              );
-            })}
-            <Text style={styles.dat}>
-              Saved on this phone. They send themselves when you have signal.
-            </Text>
-          </Section>
-        )}
-
-        <Section label="Auto-detect arrival">
-          <View style={styles.switchRow}>
-            <Text style={[styles.lead, styles.switchCopy]}>
-              Suggest a clock on or off when your phone notices you have arrived at or left
-              a job site, even if SkelClock is not open. Every suggestion needs your
-              confirmation before it counts.
-            </Text>
-            <Pressable
-              accessibilityRole="switch"
-              accessibilityLabel="Auto-detect arrival"
-              accessibilityState={{ checked: state.autoDetectEnabled }}
-              onPress={() => void onToggleAutoDetect(!state.autoDetectEnabled)}
-              style={styles.switchBox}
-            >
-              <View style={[styles.switchMark, state.autoDetectEnabled && styles.switchMarkOn]} />
-            </Pressable>
-          </View>
-        </Section>
-
-        <Section label="Privacy">
-          <Text style={styles.lead}>
-            Your location is recorded when you clock on and clock off. With auto-detect on,
-            SkelClock also checks your location in the background to suggest a clock event
-            near a job site. You can turn it off any time, and it never clocks you on or off
-            by itself without you confirming.
-          </Text>
-        </Section>
 
         <Pressable style={styles.signOut} onPress={() => void signOut()}>
           <Text style={styles.signOutText}>Sign out</Text>
@@ -511,46 +448,6 @@ function Datum({
       >
         {value}
       </Text>
-    </View>
-  );
-}
-
-function Section({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <View style={styles.section}>
-      <Text style={[styles.lbl, styles.sectionLabel]}>{label}</Text>
-      {children}
-    </View>
-  );
-}
-
-function ConnectionStrip({
-  online,
-  pending,
-  syncing,
-}: {
-  online: boolean;
-  pending: number;
-  syncing: boolean;
-}) {
-  const text = syncing
-    ? 'Sending'
-    : !online
-      ? pending > 0
-        ? `Offline · ${pending} saved on this phone`
-        : 'Offline · clocks saved on this phone'
-      : pending > 0
-        ? `${pending} waiting to send`
-        : 'All sent';
-
-  // Green only when there is genuinely nothing outstanding — boards down.
-  const ink = !online || pending > 0 ? colors.yellow : colors.green;
-
-  return (
-    <View style={styles.strip}>
-      <View style={[styles.mark, { backgroundColor: ink }]} />
-      <Text style={[styles.stripText, { color: ink }]}>{text}</Text>
-      {syncing && <ActivityIndicator size="small" color={colors.inkFaint} />}
     </View>
   );
 }
@@ -623,16 +520,6 @@ const noticeTone = (tone: string) =>
 
 const noticeInk = (tone: string): string =>
   tone === 'error' ? colors.magenta : tone === 'warn' ? colors.yellow : colors.inkFaint;
-
-const labelForEvent = (t: string): string =>
-  ({
-    clock_in: 'Clock on',
-    clock_out: 'Clock off',
-    break_start: 'Break start',
-    break_end: 'Break end',
-    job_change: 'Job change',
-    activity_change: 'Activity change',
-  })[t] ?? t;
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -728,7 +615,11 @@ const styles = StyleSheet.create({
   secondaryText: { ...t.act, fontSize: 15, color: colors.yellow },
 
   /* ── site plan ───────────────────────────────────────────────────────── */
-  planBlock: { gap: r.r4, paddingTop: r.r4, borderTopWidth: 1, borderTopColor: colors.line },
+  // Cancels the sheet's own margin so the map runs edge to edge. The content
+  // container pads every child by half a rosette; the map is the one thing
+  // that should not be inset.
+  mapBlock: { marginHorizontal: -r.r2 },
+  planInset: { paddingHorizontal: r.r2 },
   ghost: {
     minHeight: MIN_TAP,
     alignItems: 'center',
@@ -739,64 +630,11 @@ const styles = StyleSheet.create({
   ghostPressed: { backgroundColor: colors.paper200 },
   ghostText: { ...t.act, fontSize: 15, color: colors.ink },
 
-  /* ── sections ────────────────────────────────────────────────────────── */
-  section: { gap: r.r4, paddingTop: r.r4, borderTopWidth: 1, borderTopColor: colors.line },
-  sectionLabel: { color: colors.ink700 },
-
-  /* ── activity cells ──────────────────────────────────────────────────── */
-  cells: { flexDirection: 'row', flexWrap: 'wrap', gap: r.r8 },
-  cell: {
-    minHeight: MIN_TAP,
-    paddingHorizontal: r.r4,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.line,
-  },
-  cellOn: { borderColor: colors.yellow, backgroundColor: colors.fillYellow },
-  cellPressed: { backgroundColor: colors.paper200 },
-  cellText: { ...t.dat, color: colors.ink700 },
-  cellTextOn: { color: colors.yellow },
-
-  /* ── the queue, as a schedule ────────────────────────────────────────── */
-  queueRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: r.r4,
-    minHeight: r.r1,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.line,
-  },
-  rule5: { borderBottomColor: colors.rule5 },
-  queueEvent: { ...t.dat, color: colors.ink, width: 96 },
-  queueTime: { ...t.dat, color: colors.ink700 },
-  queueState: { ...t.dat, color: colors.inkFaint, flex: 1, textAlign: 'right' },
-  queueBad: { color: colors.magenta },
-
-  /* ── the switch, drawn square ────────────────────────────────────────── */
-  switchRow: { flexDirection: 'row', alignItems: 'center', gap: r.r4 },
-  switchCopy: { flex: 1 },
-  switchBox: {
-    width: MIN_TAP,
-    height: MIN_TAP,
-    borderWidth: 1,
-    borderColor: colors.ink,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  switchMark: { width: r.r2, height: r.r2, backgroundColor: 'transparent' },
-  switchMarkOn: { backgroundColor: colors.green },
-
   /* ── banded notices ──────────────────────────────────────────────────── */
   notice: { padding: r.r4, gap: r.r8, borderLeftWidth: r.r8 },
   noticeBad: { backgroundColor: colors.fillMagenta, borderLeftColor: colors.magenta },
   noticeWarn: { backgroundColor: colors.fillYellow, borderLeftColor: colors.yellow },
   noticeFlat: { backgroundColor: colors.paper200, borderLeftColor: colors.steel },
-
-  /* ── strip ───────────────────────────────────────────────────────────── */
-  strip: { flexDirection: 'row', alignItems: 'center', gap: r.r4, minHeight: r.r1 },
-  mark: { width: 9, height: 9 },
-  stripText: { ...t.dat, flex: 1 },
 
   signOut: {
     minHeight: MIN_TAP,

@@ -24,6 +24,7 @@
 import * as SecureStore from 'expo-secure-store';
 
 import { ApiClient } from './api';
+import { stop as stopTracking } from './tracking';
 import { isSupabaseConfigured, requireSupabase, toE164 } from './supabase';
 
 export { toE164 };
@@ -195,6 +196,9 @@ export async function verifyOtp(phone: string, token: string): Promise<void> {
 }
 
 export async function signOut(): Promise<void> {
+  // Signing out is one of the ways to stop being on shift, so it is one of the
+  // ways location tracking has to stop. useClock covers the others.
+  await stopTracking().catch(() => undefined);
   await SecureStore.deleteItemAsync(PROFILE_KEY).catch(() => undefined);
 
   if (IS_DEMO) {

@@ -245,14 +245,53 @@ Magenta is deliberately absent from the Clock Off button. Knocking off is not
 an exception, and spending the "something has crossed a line" colour on the
 most-pressed control would leave nothing to say when something actually has.
 
-### GPS never blocks a worker
+### The fence blocks clocking on, and never blocks clocking off
 
-Phone GPS on a scaffold deck is routinely 50–100m out. The system measures the
-distance, records it, and raises an exception for the office — it does not
-refuse the clock-on. If the worker is outside the fence the app asks for a
-reason first, and "clock on anyway" is always available. A job with no
-coordinates loaded yet produces `inside_geofence = null`, which is deliberately
-different from `false` and raises nothing.
+A worker has to be inside the site boundary to clock on. This is a change from
+the original brief, which said GPS must never stop someone starting work, and
+it is enforced on the phone rather than the server — see below for why.
+
+The important half is what it does *not* refuse, because phone GPS on a
+scaffold deck is routinely 50–100m out and a bad fix must not cost somebody a
+shift. `blocksClockIn()` in `packages/core/src/geo.ts` lets three cases
+through:
+
+| Case | Why |
+| --- | --- |
+| No position at all | A basement, a shed, a flat GPS, a refused permission. Unknown is not the same as outside. |
+| Site has no coordinates | `inside_geofence = null`. The fence does not exist yet, so there is nothing to be outside of. |
+| Error bars reach the fence | If the accuracy margin overlaps the boundary we do not know which side they are on, and a guess there is a guess about someone's pay. |
+
+**Clocking off is never blocked.** A worker who has already left the site must
+always be able to end their shift — otherwise the fence traps them on the clock
+and the hours run all night. Off-site clock-offs still record a reason and
+raise an exception for the office, exactly as before.
+
+**Enforcement is client-side only, deliberately.** If the server rejected
+off-site events, an event queued offline at a bad moment would be refused
+permanently and the shift would be lost. The server keeps recording every event
+and raising the exception; the phone is what declines to send one.
+
+### Tracking runs for the shift, and only the shift
+
+While a worker is clocked on, SkelClock follows their position — foreground
+watcher plus a background task — so the site map stays live and the fence check
+is answered from a current position rather than a stale one. It starts on
+clock-on and stops on clock-off, on sign-out, and on any other exit from the
+clocked-on state; `apps/mobile/src/tracking.ts` owns that rule so no caller has
+to remember it.
+
+Those positions stay on the handset. There is no breadcrumb trail uploaded to
+the office: only the single position taken at the moment of the press is sent,
+which is what hours are matched to. A stored history of everywhere a worker
+went is a much larger thing to hold than an attendance record, and would need a
+schema decision and a retention policy rather than just pointing this task
+somewhere new.
+
+This is a materially different thing for a worker to agree to than the original
+one-fix-per-press design, so it is stated plainly in three places that must
+agree: the header of `location.ts`, the permission strings in `app.json`, and
+the privacy section on the clock screen itself.
 
 ### The device clock is the payroll clock
 

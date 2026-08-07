@@ -5,14 +5,15 @@
     "version": "0.1.0",
     "orientation": "portrait",
     "scheme": "skelclock",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "au.com.skelscaff.skelclock",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "SkelClock records where you are when you clock on and off, so your hours can be matched to the right job.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "If you turn on auto-detect arrival, SkelClock checks your location in the background to suggest a clock-in when you reach a job site. This is off by default, you can turn it off anytime, and every automatic suggestion needs your confirmation before it counts as a real clock event."
+        "UIBackgroundModes": ["location"],
+        "NSLocationWhenInUseUsageDescription": "SkelClock shows you on a map of your job site so you can see you are inside the site boundary before you clock on, and records where you were when you clocked on and off.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "While you are clocked on, SkelClock follows your location, including when the app is closed, so your site map stays live and your hours are matched to the right job. It starts when you clock on and stops when you clock off — never between shifts. Your positions stay on this phone; only the location at the moment you clock on or off is sent to the office."
       }
     },
     "android": {
@@ -29,8 +30,8 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "SkelClock records where you are when you clock on and off, so your hours can be matched to the right job.",
-          "locationAlwaysAndWhenInUsePermission": "If you turn on auto-detect arrival, SkelClock checks your location in the background to suggest a clock-in when you reach a job site. This is off by default, you can turn it off anytime, and every automatic suggestion needs your confirmation before it counts as a real clock event.",
+          "locationWhenInUsePermission": "SkelClock shows you on a map of your job site so you can see you are inside the site boundary before you clock on, and records where you were when you clocked on and off.",
+          "locationAlwaysAndWhenInUsePermission": "While you are clocked on, SkelClock follows your location, including when the app is closed, so your site map stays live and your hours are matched to the right job. It starts when you clock on and stops when you clock off — never between shifts. Your positions stay on this phone; only the location at the moment you clock on or off is sent to the office.",
           "isIosBackgroundLocationEnabled": true,
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true

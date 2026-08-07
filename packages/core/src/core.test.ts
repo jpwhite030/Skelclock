@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   bearingDegrees,
+  blocksClockIn,
   distanceMetres,
   evaluateGeofence,
   shouldRaiseGeofenceException,
@@ -100,6 +101,85 @@ test('bearingDegrees is a compass bearing, not a flat arctangent', () => {
 test('bearingDegrees returns 0 for identical points rather than NaN', () => {
   const p = { latitude: -34.4248, longitude: 150.8931 };
   assert.equal(bearingDegrees(p, p), 0);
+});
+
+// --- the fence as a hard block -----------------------------------------------
+//
+// These guard the cases where refusing a clock-on would cost a worker a shift
+// for something that is not their fault. The positive case is one test; the
+// rest are all the ways someone must still get to work.
+
+const site = { latitude: -34.4248, longitude: 150.8931 };
+const fenceM = 200;
+
+/** Roughly `metres` due north of the site. 1 degree of latitude ~ 111,320m. */
+const northOf = (metres: number) => ({
+  latitude: site.latitude + metres / 111_320,
+  longitude: site.longitude,
+});
+
+test('blocksClockIn refuses a position confidently outside the fence', () => {
+  const result = evaluateGeofence({
+    position: northOf(600),
+    accuracyM: 10,
+    site,
+    radiusM: fenceM,
+  });
+
+  assert.equal(result.insideGeofence, false);
+  assert.equal(blocksClockIn(result), true);
+});
+
+test('blocksClockIn allows a worker inside the fence', () => {
+  const result = evaluateGeofence({
+    position: northOf(50),
+    accuracyM: 10,
+    site,
+    radiusM: fenceM,
+  });
+
+  assert.equal(blocksClockIn(result), false);
+});
+
+test('blocksClockIn does not refuse when there is no position at all', () => {
+  // A basement, a shed, a flat GPS, a refused permission. Unknown is not
+  // outside, and must never cost somebody a shift.
+  const result = evaluateGeofence({
+    position: null,
+    accuracyM: null,
+    site,
+    radiusM: fenceM,
+  });
+
+  assert.equal(result.insideGeofence, null);
+  assert.equal(blocksClockIn(result), false);
+});
+
+test('blocksClockIn does not refuse when the site has no coordinates yet', () => {
+  const result = evaluateGeofence({
+    position: northOf(5000),
+    accuracyM: 10,
+    site: null,
+    radiusM: fenceM,
+  });
+
+  assert.equal(result.insideGeofence, null);
+  assert.equal(blocksClockIn(result), false);
+});
+
+test('blocksClockIn does not refuse when GPS error bars reach the fence', () => {
+  // 260m out with 100m of error: the worker may well be standing inside it.
+  // This is the ordinary case on a scaffold deck, not an edge case.
+  const result = evaluateGeofence({
+    position: northOf(260),
+    accuracyM: 100,
+    site,
+    radiusM: fenceM,
+  });
+
+  assert.equal(result.insideGeofence, false);
+  assert.equal(result.withinAccuracyMargin, true);
+  assert.equal(blocksClockIn(result), false);
 });
 
 test('a worker standing on site is inside the fence', () => {

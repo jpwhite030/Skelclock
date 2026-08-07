@@ -136,3 +136,33 @@ export function shouldRaiseGeofenceException(result: GeofenceResult): boolean {
   if (result.insideGeofence) return false;
   return !result.withinAccuracyMargin;
 }
+
+/**
+ * Whether a clock-on should be refused outright for being off-site.
+ *
+ * This is the one rule in the system that can stop someone starting work, so
+ * what it does *not* block is the important half:
+ *
+ *   No position at all       insideGeofence is null. A worker in a basement,
+ *                            a shed, or with a flat GPS is not "outside" a
+ *                            fence — their position is unknown, and unknown
+ *                            must not cost them a shift.
+ *   Site has no coordinates  Also null. The fence does not exist yet; there
+ *                            is nothing to be outside of.
+ *   Error bars reach the     Phone GPS on a scaffold deck is routinely 50-100m
+ *   fence                    out. If the accuracy margin overlaps the boundary
+ *                            we do not know which side they are on, and a
+ *                            guess in that state is a guess about someone's
+ *                            pay.
+ *
+ * So it refuses only a position we are confident is beyond the fence. That is
+ * deliberately the same test as shouldRaiseGeofenceException, but it is a
+ * separate function because they answer different questions — one troubles a
+ * supervisor, the other stops work — and the day they need to diverge, they
+ * should diverge without one silently changing the other.
+ */
+export function blocksClockIn(result: GeofenceResult): boolean {
+  if (result.insideGeofence === null) return false;
+  if (result.insideGeofence) return false;
+  return !result.withinAccuracyMargin;
+}

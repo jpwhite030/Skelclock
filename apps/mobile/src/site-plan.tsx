@@ -40,6 +40,8 @@ const MAX_PX = 108;
 
 export interface SitePlanProps {
   siteName: string | null;
+  customerName: string | null;
+  siteAddress: string | null;
   site: LatLng | null;
   radiusM: number;
   fix: (LatLng & { accuracyM: number | null }) | null;
@@ -47,7 +49,15 @@ export interface SitePlanProps {
   fixAt: string | null;
 }
 
-function SitePlanView({ siteName, site, radiusM, fix, fixAt }: SitePlanProps) {
+function SitePlanView({
+  siteName,
+  customerName,
+  siteAddress,
+  site,
+  radiusM,
+  fix,
+  fixAt,
+}: SitePlanProps) {
   // Nothing to draw a fence around. Said plainly rather than drawn as an empty
   // circle, which would imply a fence that does not exist.
   if (!site) {
@@ -217,11 +227,21 @@ function SitePlanView({ siteName, site, radiusM, fix, fixAt }: SitePlanProps) {
         )}
       </Svg>
 
-      <View style={styles.foot}>
-        <Text style={styles.dat}>{siteName ?? 'Site'}</Text>
-        <Text style={[styles.dat, { color: ink }]}>
-          {distanceM === null ? '—' : `${formatDistance(distanceM)} from centre`}
-        </Text>
+      {/* Same plate as the map, so an offline worker reads the same thing. */}
+      <View style={styles.plate}>
+        {customerName && (
+          <Text style={styles.customer} numberOfLines={1}>
+            {customerName}
+          </Text>
+        )}
+        <View style={styles.foot}>
+          <Text style={styles.address} numberOfLines={2}>
+            {siteAddress ?? siteName ?? 'No address on file'}
+          </Text>
+          <Text style={[styles.dat, { color: ink }]}>
+            {distanceM === null ? '—' : formatDistance(distanceM)}
+          </Text>
+        </View>
       </View>
 
       <Text style={styles.note}>
@@ -284,12 +304,20 @@ const styles = StyleSheet.create({
   empty: { gap: rosette.r8, paddingVertical: rosette.r4 },
   head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
   svg: { width: '100%', aspectRatio: W / H, backgroundColor: colors.paper200 },
+  plate: {
+    borderTopWidth: 1,
+    borderTopColor: colors.ink,
+    paddingTop: rosette.r8,
+    gap: rosette.r8,
+  },
   foot: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'baseline',
-    paddingTop: rosette.r8,
+    alignItems: 'flex-end',
+    gap: rosette.r4,
   },
+  customer: { ...t.dat, fontSize: 15, color: colors.ink },
+  address: { ...t.dat, color: colors.ink700, flexShrink: 1 },
   lbl: { ...t.lbl, color: colors.inkFaint },
   dat: { ...t.dat, color: colors.ink },
   note: { ...t.dat, color: colors.inkFaint },
