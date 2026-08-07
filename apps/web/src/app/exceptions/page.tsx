@@ -16,7 +16,7 @@
  * grey lines. You read the shape of the page before you read a word.
  */
 
-import { listExceptions, type ExceptionRow } from '@skelclock/server';
+import { listExceptions, listStaleSuggestions, type ExceptionRow } from '@skelclock/server';
 
 import { db } from '../../lib/db';
 import { getDashboardSession } from '../../lib/session';
@@ -33,6 +33,7 @@ const TYPE_LABELS: Record<string, string> = {
   offline_event: 'Recorded offline',
   unassigned_job: 'No job selected',
   odoo_sync_failure: 'Odoo sync failed',
+  stale_suggestion: 'Unconfirmed auto-clock',
 };
 
 /** What the office should actually do. One sentence, never a column. */
@@ -45,6 +46,7 @@ const GUIDANCE: Record<string, string> = {
   offline_event: 'No action. The times came from the device clock, as designed.',
   unassigned_job: 'Assign the job so the hours can be costed.',
   odoo_sync_failure: 'See Odoo sync for the error and the retry.',
+  stale_suggestion: "Chase the worker — it's still sitting on their phone unconfirmed.",
 };
 
 export default async function ExceptionsPage({
@@ -62,6 +64,12 @@ export default async function ExceptionsPage({
     companyId: session.companyId,
     status: status === 'all' ? undefined : status,
   });
+
+  // Computed live, not stored — see listStaleSuggestions. Only relevant next
+  // to 'open', the same status every one of these synthetic rows carries.
+  if (status === 'open' || status === 'all') {
+    rows.push(...(await listStaleSuggestions(db, { companyId: session.companyId })));
+  }
 
   const high = rows.filter((r) => r.severity === 1);
   const medium = rows.filter((r) => r.severity === 2);

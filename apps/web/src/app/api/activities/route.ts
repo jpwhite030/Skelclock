@@ -1,3 +1,5 @@
+import { activitiesResponseSchema } from '@skelclock/contracts';
+
 import { db } from '../../../lib/db';
 import { authErrorResponse, requireCaller } from '../../../lib/auth';
 
@@ -21,13 +23,15 @@ export async function GET(request: Request): Promise<Response> {
     );
 
     return Response.json(
-      rows.map((r) => ({
-        id: r.id,
-        code: r.code,
-        name: r.name,
-        isTravel: r.is_travel,
-        isPaid: r.is_paid,
-      })),
+      activitiesResponseSchema.parse(
+        rows.map((r) => ({
+          id: r.id,
+          code: r.code,
+          name: r.name,
+          isTravel: r.is_travel,
+          isPaid: r.is_paid,
+        })),
+      ),
     );
   } catch (error) {
     const authResponse = authErrorResponse(error);

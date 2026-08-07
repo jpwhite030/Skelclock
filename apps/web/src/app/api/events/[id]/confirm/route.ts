@@ -1,3 +1,4 @@
+import { confirmSuggestionRequestSchema, suggestionActionResponseSchema } from '@skelclock/contracts';
 import { confirmSuggestedEvent, DbError, SuggestionError } from '@skelclock/server';
 
 import { db } from '../../../../../lib/db';
@@ -23,14 +24,22 @@ export async function POST(
       );
     }
 
+    // Body is optional: a plain confirm has nothing to send. jobId is only
+    // meaningful when the suggestion was ambiguous (two sites at once).
+    const rawBody = await request.json().catch(() => ({}));
+    const body = confirmSuggestionRequestSchema.parse(rawBody);
+
     const result = await confirmSuggestedEvent(db, {
       companyId: caller.companyId,
       employeeId: caller.employeeId,
       eventId,
       actorUserId: caller.appUserId,
+      jobId: body.jobId,
     });
 
-    return Response.json({ status: 'confirmed', eventId: result.eventId });
+    return Response.json(
+      suggestionActionResponseSchema.parse({ status: 'confirmed', eventId: result.eventId }),
+    );
   } catch (error) {
     const authResponse = authErrorResponse(error);
     if (authResponse) return authResponse;

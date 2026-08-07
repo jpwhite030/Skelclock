@@ -204,7 +204,7 @@ async function seed(db: Db): Promise<void> {
   for (const s of SITES) {
     const site = await q<{ id: string }>(
       `insert into site (company_id, name, address, latitude, longitude, geofence_radius_m)
-       values ($1,$2,$3,$4,$5,200) returning id`,
+       values ($1,$2,$3,$4,$5,70) returning id`,
       [companyId, s.site, s.address, s.lat, s.lng],
     );
     const job = await q<{ id: string }>(

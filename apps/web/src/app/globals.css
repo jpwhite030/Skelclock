@@ -508,6 +508,65 @@ main.paper {
 .act:disabled { color: var(--faint); border-bottom-color: var(--line); cursor: not-allowed; }
 
 /* ============================================================================
+   SHT 02a — TIMESHEET CORRECTION
+   ========================================================================= */
+
+.correction-list { display: flex; flex-direction: column; margin-top: var(--r-2); }
+.correction-row {
+  padding: var(--r-8) 0; border-top: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: var(--r-8);
+}
+.correction-row:last-child { border-bottom: 1px solid var(--line); }
+.correction-row[data-suggested] { opacity: .7; }
+.correction-row__main { display: flex; align-items: center; gap: var(--r-4); flex-wrap: wrap; }
+.correction-row__main .act { margin-left: var(--r-4); }
+
+.correction-row__form {
+  display: flex; align-items: flex-end; gap: var(--r-4); flex-wrap: wrap;
+  padding: var(--r-8); background: var(--canvas-200); border: 1px solid var(--line-strong);
+}
+.correction-row__form label {
+  display: flex; flex-direction: column; gap: 4px;
+  color: var(--muted); font: 500 11px/1 var(--font-mono);
+  letter-spacing: .1em; text-transform: uppercase;
+}
+.correction-row__form select, .correction-row__form input {
+  background: var(--canvas); border: 1px solid var(--line-strong); color: var(--bone);
+  font: 500 13px var(--font-mono); padding: 5px 8px; min-height: 28px;
+}
+.correction-row__form select:focus-visible, .correction-row__form input:focus-visible {
+  border-color: var(--cad-yellow); outline: none;
+}
+
+.correction-add { margin-top: var(--r-2); }
+
+/* ============================================================================
+   SHT 06 — SETTINGS
+   ========================================================================= */
+
+.card {
+  border: 1px solid var(--line-strong); padding: var(--r-2);
+  display: flex; flex-direction: column; gap: var(--r-8);
+  margin-bottom: var(--r-2); max-width: 62ch;
+}
+
+.settings-form__row {
+  display: flex; align-items: center; gap: var(--r-8);
+  color: var(--muted); font: 500 12px/1.4 var(--font-mono);
+  letter-spacing: .06em; text-transform: none;
+}
+.settings-form__row input[type="number"],
+.settings-form__row input[type="time"] {
+  background: var(--canvas-200); border: 1px solid var(--line-strong); color: var(--bone);
+  font: 500 13px var(--font-mono); padding: 4px 8px; min-height: 26px; width: 9ch;
+}
+.settings-form__row input[type="checkbox"],
+.settings-form__row input[type="radio"] { accent-color: var(--brand); }
+.settings-form__hint { display: block; color: var(--faint); font-size: 11px; margin-top: 2px; }
+
+.settings-form__save { display: flex; align-items: center; gap: var(--r-4); margin-top: var(--r-2); }
+
+/* ============================================================================
    SHT 01 — WORKING NOW
    ========================================================================= */
 
@@ -811,12 +870,14 @@ main.paper {
   height: 100%; width: 100%; background: var(--canvas-100);
   font-family: var(--font-mono);
 }
-/* Stock OSM tiles are a bright white sheet in the middle of a dark drawing.
-   Desaturating before inverting gives a monochrome plan; hue-rotating instead
-   left the land green and the water teal, which read as a different app.
-   Pins and fences draw above this pane and are unaffected. */
+/* Satellite imagery, true colour — a scaffold gate is easier to place against
+   an actual photo of the site than a monochrome street plan. A slight
+   darkening keeps it from glaring in the middle of the rest of the dark UI
+   without touching its hue, unlike the old invert-and-desaturate treatment
+   this replaced (that only worked on flat-colour street tiles). Pins and
+   fences draw above this pane and are unaffected. */
 .leaflet-tile-pane {
-  filter: grayscale(1) invert(1) brightness(.82) contrast(1.05);
+  filter: brightness(.92);
 }
 .leaflet-container .leaflet-control-attribution {
   background: rgba(15,14,12,.75); color: var(--faint);

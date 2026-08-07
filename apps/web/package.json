@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@skelclock/contracts": "*",
     "@skelclock/core": "*",
     "@skelclock/odoo": "*",
     "@skelclock/server": "*",

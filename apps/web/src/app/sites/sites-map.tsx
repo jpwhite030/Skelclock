@@ -99,7 +99,7 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
       [siteId]: {
         latitude: lat,
         longitude: lng,
-        geofenceRadiusM: prev[siteId]?.geofenceRadiusM ?? 200,
+        geofenceRadiusM: prev[siteId]?.geofenceRadiusM ?? 70,
         dirty: true,
       },
     }));
@@ -201,9 +201,13 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
 
       <div className="sites-map-panel">
         <MapContainer center={center} zoom={12} scrollWheelZoom style={{ height: '100%', width: '100%' }}>
+          {/* Esri World Imagery: free, no API key, true-colour aerial photography —
+              a scaffold gate is easier to place against an actual photo of the
+              site than a street-map line drawing. */}
           <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            attribution='Tiles &copy; <a href="https://www.esri.com/">Esri</a> — Esri, Maxar, Earthstar Geographics, and the GIS User Community'
+            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+            maxZoom={19}
           />
           <PlaceOnClick armedSiteId={armedSiteId} onPlace={placeOrMove} />
           {sites.map((site) => {

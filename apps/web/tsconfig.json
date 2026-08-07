@@ -15,6 +15,7 @@
     "incremental": true,
     "plugins": [{ "name": "next" }],
     "paths": {
+      "@skelclock/contracts": ["../../packages/contracts/src/index.ts"],
       "@skelclock/core": ["../../packages/core/src/index.ts"],
       "@skelclock/odoo": ["../../packages/odoo/src/index.ts"],
       "@skelclock/server": ["../../packages/server/src/index.ts"]

@@ -2,7 +2,7 @@
 const nextConfig = {
   // The workspace packages ship TypeScript source rather than a build step, so
   // Next has to compile them the same way it compiles the app.
-  transpilePackages: ['@skelclock/core', '@skelclock/odoo', '@skelclock/server'],
+  transpilePackages: ['@skelclock/contracts', '@skelclock/core', '@skelclock/odoo', '@skelclock/server'],
 
   // `pg` is a native-ish driver and PGlite ships a WASM binary; neither
   // survives being bundled into the server chunk.
