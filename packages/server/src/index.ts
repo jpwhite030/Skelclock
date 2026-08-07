@@ -8,3 +8,7 @@ export * from './queries.js';
 export * from './crew.js';
 export * from './suggestions.js';
 export * from './sites.js';
+export * from './devices.js';
+export * from './consent.js';
+export * from './settings.js';
+export * from './authz.js';

@@ -11,6 +11,7 @@
 import {
   buildSegments,
   detectExceptions,
+  type DayTotals,
   type DetectedException,
   type TimeSegment,
   type WorkActivityRef,
@@ -18,6 +19,7 @@ import {
 
 import { one, withTransaction, type Db } from './db.js';
 import { toStoredEvent } from './ingest.js';
+import { payrollSegmentOptions } from './settings.js';
 
 export interface RebuildOptions {
   now?: Date;
@@ -30,7 +32,7 @@ export interface RebuildOptions {
 export interface RebuildResult {
   timesheetId: string;
   segments: TimeSegment[];
-  totals: { totalShiftMinutes: number; totalBreakMinutes: number; totalPaidMinutes: number };
+  totals: DayTotals;
   exceptions: DetectedException[];
   hasOpenShift: boolean;
 }
@@ -72,6 +74,7 @@ export async function rebuildTimesheet(
   const { segments, totals, hasOpenShift } = buildSegments(events, {
     activities,
     now,
+    ...(await payrollSegmentOptions(db, sheet.company_id)),
   });
 
   // Drivers return `date` columns as Date objects or as strings depending on
@@ -135,13 +138,15 @@ export async function rebuildTimesheet(
           `update timesheet
               set total_shift_minutes = $2,
                   total_break_minutes = $3,
-                  total_paid_minutes  = $4
+                  total_paid_minutes  = $4,
+                  total_auto_lunch_minutes = $5
             where id = $1`,
           [
             timesheetId,
             totals.totalShiftMinutes,
             totals.totalBreakMinutes,
             totals.totalPaidMinutes,
+            totals.autoLunchMinutes,
           ],
         );
       }
