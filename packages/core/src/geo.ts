@@ -111,3 +111,32 @@ export function shouldRaiseGeofenceException(result: GeofenceResult): boolean {
   if (result.insideGeofence) return false;
   return !result.withinAccuracyMargin;
 }
+
+/** A GPS fix reported with no error bars at all is not trustworthy enough to
+ * skip a human — treat "unknown" the same as "too loose". */
+const AUTO_CONFIRM_MAX_ACCURACY_M = 30;
+
+export interface AutoConfirmInput {
+  insideGeofence: boolean | null;
+  accuracyM: number | null;
+  /** How many of the worker's assigned sites the fix fell inside. */
+  candidateSiteCount: number;
+}
+
+/**
+ * Whether a geofence-raised event is trustworthy enough to become a live
+ * clock immediately, skipping the tap-to-confirm step.
+ *
+ * Deliberately conservative, same spirit as shouldRaiseGeofenceException: tap
+ * stays the fallback for anything this isn't sure about. Three ways to fail
+ * the automatic path — a loose fix, landing outside the fence, or landing
+ * inside more than one assigned site's fence at once (evaluateGeofence only
+ * ever checks one site, so the caller resolves ambiguity before calling this;
+ * candidateSiteCount > 1 means it could not).
+ */
+export function shouldAutoConfirmGeofence(input: AutoConfirmInput): boolean {
+  if (input.candidateSiteCount > 1) return false;
+  if (input.insideGeofence !== true) return false;
+  if (input.accuracyM == null || input.accuracyM > AUTO_CONFIRM_MAX_ACCURACY_M) return false;
+  return true;
+}
