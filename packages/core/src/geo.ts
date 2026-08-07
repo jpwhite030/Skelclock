@@ -1,10 +1,16 @@
 /**
  * Distance and geofence evaluation.
  *
- * The brief is explicit that a worker must never be blocked by this: phone GPS
- * on a scaffold deck, between steel and a brick wall, is routinely 50-100m out
- * and occasionally far worse. So we measure, we record, and we raise an
- * exception — we do not refuse the clock-in.
+ * The brief said a worker must never be blocked by this. That has since been
+ * reversed: blocksClockIn() below refuses an off-site clock-on outright.
+ *
+ * The reasoning that produced the original rule has not gone away, though, and
+ * it is what shapes every function here. Phone GPS on a scaffold deck, between
+ * steel and a brick wall, is routinely 50-100m out and occasionally far worse.
+ * So a position we are unsure of is never treated as a position outside: the
+ * three predicates that act on a fence — raise an exception, refuse a clock-on,
+ * auto-confirm a suggestion — all decline to act on an unknown, and each says
+ * in its own comment which way it fails and why.
  */
 
 const EARTH_RADIUS_M = 6_371_008.8; // IUGG mean radius
@@ -165,4 +171,33 @@ export function blocksClockIn(result: GeofenceResult): boolean {
   if (result.insideGeofence === null) return false;
   if (result.insideGeofence) return false;
   return !result.withinAccuracyMargin;
+}
+
+/** A GPS fix reported with no error bars at all is not trustworthy enough to
+ * skip a human — treat "unknown" the same as "too loose". */
+const AUTO_CONFIRM_MAX_ACCURACY_M = 30;
+
+export interface AutoConfirmInput {
+  insideGeofence: boolean | null;
+  accuracyM: number | null;
+  /** How many of the worker's assigned sites the fix fell inside. */
+  candidateSiteCount: number;
+}
+
+/**
+ * Whether a geofence-raised event is trustworthy enough to become a live
+ * clock immediately, skipping the tap-to-confirm step.
+ *
+ * Deliberately conservative, same spirit as shouldRaiseGeofenceException: tap
+ * stays the fallback for anything this isn't sure about. Three ways to fail
+ * the automatic path — a loose fix, landing outside the fence, or landing
+ * inside more than one assigned site's fence at once (evaluateGeofence only
+ * ever checks one site, so the caller resolves ambiguity before calling this;
+ * candidateSiteCount > 1 means it could not).
+ */
+export function shouldAutoConfirmGeofence(input: AutoConfirmInput): boolean {
+  if (input.candidateSiteCount > 1) return false;
+  if (input.insideGeofence !== true) return false;
+  if (input.accuracyM == null || input.accuracyM > AUTO_CONFIRM_MAX_ACCURACY_M) return false;
+  return true;
 }

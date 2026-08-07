@@ -1,3 +1,4 @@
+import { suggestionActionResponseSchema } from '@skelclock/contracts';
 import { DbError, dismissSuggestedEvent, SuggestionError } from '@skelclock/server';
 
 import { db } from '../../../../../lib/db';
@@ -33,7 +34,9 @@ export async function POST(
       reason: body.reason ?? '',
     });
 
-    return Response.json({ status: 'dismissed', eventId: result.eventId });
+    return Response.json(
+      suggestionActionResponseSchema.parse({ status: 'dismissed', eventId: result.eventId }),
+    );
   } catch (error) {
     const authResponse = authErrorResponse(error);
     if (authResponse) return authResponse;

@@ -14,6 +14,16 @@ import {
 } from '@expo-google-fonts/ibm-plex-mono';
 import { InstrumentSans_400Regular } from '@expo-google-fonts/instrument-sans';
 
+// Side-effect only: registers TaskManager.defineTask(...) for both background
+// tasks at the true app entry, unconditionally. They already run whenever
+// useClock (mounted from app/index.tsx) pulls them in transitively, but a
+// background trigger can relaunch the app headless — via a path that may not
+// render index.tsx first — and the OS needs the task already registered the
+// moment that JS context finishes evaluating. Importing here, outside any
+// component, is the belt-and-suspenders placement Expo's own docs recommend.
+import '../src/geofence';
+import '../src/tracking';
+
 import { getSession, onSessionChange, type AppSession } from '../src/auth';
 import { colors, fonts, FONT_ASSETS, type as t } from '../src/theme';
 

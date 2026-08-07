@@ -4,11 +4,43 @@
  * The transport for the offline queue plus the handful of reads the clock
  * screen needs. Every call carries the Supabase access token; a 401 means the
  * session lapsed and the caller sends the worker back to the login screen.
+ *
+ * Every response is parsed against the same zod schema apps/web validates its
+ * response with (@skelclock/contracts) — if a route ever stops matching the
+ * contract, this throws on the very next fetch in dev rather than the app
+ * quietly misreading a field on a worker's phone.
  */
 
 import Constants from 'expo-constants';
+import { z } from 'zod';
 
-import type { IngestOutcomeDto, QueuedEvent, Transport } from './queue';
+import {
+  activitiesResponseSchema,
+  deviceCheckinResponseSchema,
+  geofenceConsentResponseSchema,
+  ingestResponseSchema,
+  jobsResponseSchema,
+  meSchema,
+  pendingSuggestionsResponseSchema,
+  suggestionActionResponseSchema,
+  timesheetActionResponseSchema,
+  workerHomeSchema,
+  type ActivityDto,
+  type DeviceCheckinRequestDto,
+  type GeofenceConsentRequestDto,
+  type IngestOutcomeDto,
+  type JobDto,
+  type MeDto,
+  type PendingSuggestionDto,
+  type WorkerHomeDto,
+} from '@skelclock/contracts';
+
+import type { QueuedEvent, Transport } from './queue';
+
+export type { ActivityDto, JobDto, PendingSuggestionDto, WorkerHomeDto };
+// Kept as the names the rest of the mobile app already imports.
+export type ActivityOption = ActivityDto;
+export type JobOption = JobDto;
 
 const BASE_URL =
   (Constants.expoConfig?.extra?.apiUrl as string | undefined) ??
@@ -30,69 +62,12 @@ export class ApiError extends Error {
   }
 }
 
-export interface WorkerHomeDto {
-  employeeId: string;
-  employeeName: string;
-  workDate: string;
-  clockState: 'off' | 'working' | 'on_break';
-  timesheetId: string | null;
-  timesheetStatus: string | null;
-  assignedJob: {
-    id: string;
-    jobNumber: string;
-    customerName: string | null;
-    siteName: string | null;
-    siteAddress: string | null;
-    latitude: number | null;
-    longitude: number | null;
-    geofenceRadiusM: number;
-    scheduledStart: string | null;
-  } | null;
-  currentJobId: string | null;
-  currentActivityId: string | null;
-  minutesWorked: number;
-  hoursWorkedLabel: string;
-  breakMinutes: number;
-}
-
-export interface JobOption {
-  id: string;
-  jobNumber: string;
-  siteName: string | null;
-  latitude: number | null;
-  longitude: number | null;
-  geofenceRadiusM: number;
-}
-
-export interface ActivityOption {
-  id: string;
-  code: string;
-  name: string;
-  isTravel: boolean;
-}
-
-/** Who the current token belongs to, as the server resolves it. */
-export interface MeDto {
-  appUserId: string;
-  employeeId: string | null;
-  fullName: string | null;
-  role: 'worker' | 'supervisor' | 'admin';
-}
-
-/** A geofence-raised clock event awaiting the worker's confirmation. */
-export interface PendingSuggestionDto {
-  id: string;
-  eventType: 'clock_in' | 'clock_out';
-  jobId: string | null;
-  siteName: string | null;
-  deviceTime: string;
-}
-
 export class ApiClient implements Transport {
   constructor(private readonly getToken: () => Promise<string | null>) {}
 
   private async request<T>(
     path: string,
+    schema: z.ZodType<T>,
     init: RequestInit = {},
   ): Promise<T> {
     const token = await this.getToken();
@@ -137,74 +112,95 @@ export class ApiClient implements Transport {
       );
     }
 
-    return (await response.json()) as T;
+    const json = await response.json();
+    // A route that stops matching the contract is a bug worth surfacing
+    // loudly, not a malformed-JSON case — so this is not caught as ApiError.
+    return schema.parse(json);
   }
 
   /** Transport for the offline queue. */
   async submit(events: QueuedEvent[]): Promise<IngestOutcomeDto[]> {
-    const { outcomes } = await this.request<{ outcomes: IngestOutcomeDto[] }>(
-      '/api/events',
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          events: events.map((e) => ({
-            idempotencyKey: e.idempotencyKey,
-            employeeId: e.employeeId,
-            eventType: e.eventType,
-            deviceTime: e.deviceTime,
-            jobId: e.jobId,
-            workActivityId: e.workActivityId,
-            latitude: e.latitude,
-            longitude: e.longitude,
-            gpsAccuracyM: e.gpsAccuracyM,
-            outsideReason: e.outsideReason,
-            clockMethod: e.clockMethod,
-            wasOffline: e.wasOffline,
-            deviceId: e.deviceId,
-          })),
-        }),
-      },
-    );
+    const { outcomes } = await this.request('/api/events', ingestResponseSchema, {
+      method: 'POST',
+      body: JSON.stringify({
+        events: events.map((e) => ({
+          idempotencyKey: e.idempotencyKey,
+          employeeId: e.employeeId,
+          eventType: e.eventType,
+          deviceTime: e.deviceTime,
+          jobId: e.jobId,
+          workActivityId: e.workActivityId,
+          latitude: e.latitude,
+          longitude: e.longitude,
+          gpsAccuracyM: e.gpsAccuracyM,
+          outsideReason: e.outsideReason,
+          clockMethod: e.clockMethod,
+          wasOffline: e.wasOffline,
+          deviceId: e.deviceId,
+          candidateJobIds: e.candidateJobIds,
+        })),
+      }),
+    });
     return outcomes;
   }
 
   me(): Promise<MeDto> {
-    return this.request<MeDto>('/api/me');
+    return this.request('/api/me', meSchema);
   }
 
   home(workDate: string): Promise<WorkerHomeDto> {
-    return this.request<WorkerHomeDto>(`/api/home?date=${encodeURIComponent(workDate)}`);
+    return this.request(`/api/home?date=${encodeURIComponent(workDate)}`, workerHomeSchema);
   }
 
-  jobs(): Promise<JobOption[]> {
-    return this.request<JobOption[]>('/api/jobs');
+  jobs(): Promise<JobDto[]> {
+    return this.request('/api/jobs', jobsResponseSchema);
   }
 
-  activities(): Promise<ActivityOption[]> {
-    return this.request<ActivityOption[]>('/api/activities');
+  activities(): Promise<ActivityDto[]> {
+    return this.request('/api/activities', activitiesResponseSchema);
   }
 
-  confirmTimesheet(timesheetId: string): Promise<{ status: string }> {
-    return this.request<{ status: string }>(`/api/timesheets/${timesheetId}/confirm`, {
+  confirmTimesheet(timesheetId: string) {
+    return this.request(`/api/timesheets/${timesheetId}`, timesheetActionResponseSchema, {
       method: 'POST',
+      body: JSON.stringify({ action: 'confirm' }),
     });
   }
 
   /** Geofence-raised events waiting on this worker to confirm or dismiss. */
   pendingSuggestions(): Promise<PendingSuggestionDto[]> {
-    return this.request<PendingSuggestionDto[]>('/api/events/suggested');
+    return this.request('/api/events/suggested', pendingSuggestionsResponseSchema);
   }
 
-  confirmSuggestion(eventId: string): Promise<{ status: string }> {
-    return this.request<{ status: string }>(`/api/events/${eventId}/confirm`, {
+  /** jobId only matters for an ambiguous suggestion — picking which of the
+   * candidate sites the worker meant. */
+  confirmSuggestion(eventId: string, jobId?: string) {
+    return this.request(`/api/events/${eventId}/confirm`, suggestionActionResponseSchema, {
       method: 'POST',
+      body: JSON.stringify(jobId ? { jobId } : {}),
     });
   }
 
-  dismissSuggestion(eventId: string, reason: string): Promise<{ status: string }> {
-    return this.request<{ status: string }>(`/api/events/${eventId}/reject`, {
+  dismissSuggestion(eventId: string, reason: string) {
+    return this.request(`/api/events/${eventId}/reject`, suggestionActionResponseSchema, {
       method: 'POST',
       body: JSON.stringify({ reason }),
+    });
+  }
+
+  /** A check-in, not a registration — safe and cheap to call often. */
+  checkinDevice(input: DeviceCheckinRequestDto) {
+    return this.request('/api/device', deviceCheckinResponseSchema, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  }
+
+  /** The audit trail behind the notice a worker agrees to before auto-detect starts. */
+  recordGeofenceConsent(input: GeofenceConsentRequestDto) {
+    return this.request('/api/geofence-consent', geofenceConsentResponseSchema, {
+      method: 'POST',
+      body: JSON.stringify(input),
     });
   }
 }

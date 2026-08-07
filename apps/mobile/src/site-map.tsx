@@ -74,6 +74,15 @@ function SiteMapView({
   useEffect(() => {
     if (!fix || !mapRef.current) return;
 
+    // Far enough away and framing both is useless — a worker 12,000km from the
+    // site gets an ocean, with the fence too small to see and their own dot on
+    // the other edge. Past this, stay framed on the site: the plate already
+    // states the distance in words, which is the only useful thing left to say.
+    if (distanceM !== null && distanceM > radiusM * 12) {
+      mapRef.current.animateToRegion(regionFor(site, radiusM), 300);
+      return;
+    }
+
     const dLat = radiusM / 111_320;
     const dLng = dLat / Math.cos((site.latitude * Math.PI) / 180);
 
@@ -90,7 +99,7 @@ function SiteMapView({
         animated: true,
       },
     );
-  }, [fix?.latitude, fix?.longitude, site.latitude, site.longitude, radiusM]);
+  }, [fix?.latitude, fix?.longitude, site.latitude, site.longitude, radiusM, distanceM]);
 
   const status =
     inside === null

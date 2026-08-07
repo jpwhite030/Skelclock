@@ -1,3 +1,5 @@
+import { meSchema } from '@skelclock/contracts';
+
 import { authErrorResponse, requireCaller } from '../../../lib/auth';
 
 /**
@@ -13,12 +15,12 @@ export async function GET(request: Request): Promise<Response> {
     const caller = await requireCaller(request);
 
     return Response.json(
-      {
+      meSchema.parse({
         appUserId: caller.appUserId,
         employeeId: caller.employeeId,
         fullName: caller.fullName,
         role: caller.role,
-      },
+      }),
       { headers: { 'Cache-Control': 'no-store' } },
     );
   } catch (error) {

@@ -9,17 +9,12 @@
  *     that is "synced" without ever having been approved.
  */
 
-import { newIdempotencyKey, type AttendanceEventType } from '@skelclock/core';
+import { newIdempotencyKey, type AttendanceEventType, type TimesheetStatus } from '@skelclock/core';
 
 import { one, oneOrFail, withTransaction, type Db } from './db.js';
 import { rebuildTimesheet } from './timesheet.js';
 
-export type TimesheetStatus =
-  | 'draft'
-  | 'worker_confirmed'
-  | 'supervisor_approved'
-  | 'synced'
-  | 'locked';
+export type { TimesheetStatus };
 
 /**
  * Legal moves.
@@ -372,6 +367,77 @@ export async function correctEvent(
     await rebuildTimesheet(db, timesheetId, { now, actorUserId });
     return result;
   });
+}
+
+export interface VoidEventInput {
+  eventId: string;
+  actorUserId: string;
+  reason: string;
+  now?: Date;
+}
+
+/**
+ * Removes an event with no replacement — a supervisor/admin decided it
+ * should never have been recorded at all (a duplicate manual entry, a
+ * mis-clock nobody wants to "correct" into something else). Same
+ * append-only mechanics as a correction, just without the second insert.
+ */
+export async function voidEvent(
+  db: Db,
+  input: VoidEventInput,
+): Promise<{ eventId: string; timesheetId: string | null }> {
+  const { eventId, actorUserId, reason, now = new Date() } = input;
+
+  if (!reason?.trim()) {
+    throw new WorkflowError('Voiding an event requires a reason.', 'reason_required');
+  }
+
+  const original = await oneOrFail<{
+    id: string;
+    timesheet_id: string | null;
+    voided_at: Date | null;
+  }>(
+    db,
+    'select id, timesheet_id, voided_at from attendance_event where id = $1',
+    [eventId],
+    'Attendance event',
+  );
+
+  if (original.voided_at) {
+    throw new WorkflowError('That event has already been corrected or removed.', 'already_voided');
+  }
+
+  if (original.timesheet_id) {
+    const sheet = await oneOrFail<{ status: TimesheetStatus }>(
+      db,
+      'select status from timesheet where id = $1',
+      [original.timesheet_id],
+      'Timesheet',
+    );
+    if (sheet.status === 'locked') {
+      throw new WorkflowError(
+        'This timesheet is locked. Reopen it with a reason before removing an event.',
+        'timesheet_locked',
+      );
+    }
+  }
+
+  await withTransaction(
+    db,
+    async (tx) => {
+      await tx.query(
+        `update attendance_event set voided_at = now(), voided_by = $2, void_reason = $3 where id = $1`,
+        [eventId, actorUserId, reason],
+      );
+    },
+    { actorUserId, reason },
+  );
+
+  if (original.timesheet_id) {
+    await rebuildTimesheet(db, original.timesheet_id, { now, actorUserId });
+  }
+
+  return { eventId, timesheetId: original.timesheet_id };
 }
 
 export interface AddMissingEventInput {

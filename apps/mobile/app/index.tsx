@@ -84,6 +84,33 @@ export default function ClockScreen() {
   const promptSuggestion = useCallback(
     (suggestion: PendingSuggestionDto) => {
       const action = suggestion.eventType === 'clock_in' ? 'clocking in' : 'clocking out';
+
+      // Two (or more) sites matched at once - the phone genuinely does not
+      // know which one, so the worker picks rather than the app guessing.
+      if (suggestion.candidateJobIds && suggestion.candidateJobIds.length > 1) {
+        const candidates = suggestion.candidateJobIds.map(
+          (id) => state.jobs.find((j) => j.id === id) ?? { id, siteName: null, jobNumber: id },
+        );
+        Alert.alert(
+          'Which site?',
+          `You ${suggestion.eventType === 'clock_in' ? 'arrived near' : 'left near'} ${
+            candidates.length
+          } job sites at once at ${formatTime(suggestion.deviceTime)}. Which one were you ${action.replace('ing', 'ing at')}?`,
+          [
+            ...candidates.map((c) => ({
+              text: c.siteName ?? `Job ${c.jobNumber}`,
+              onPress: () => void confirmSuggestion(suggestion.id, c.id),
+            })),
+            {
+              text: "Neither — wasn't me",
+              style: 'destructive' as const,
+              onPress: () => void dismissSuggestion(suggestion.id, 'Worker said this was not them'),
+            },
+          ],
+        );
+        return;
+      }
+
       Alert.alert(
         'Confirm your clock',
         `Looks like you ${suggestion.eventType === 'clock_in' ? 'arrived at' : 'left'} ${
@@ -102,7 +129,7 @@ export default function ClockScreen() {
         ],
       );
     },
-    [confirmSuggestion, dismissSuggestion],
+    [confirmSuggestion, dismissSuggestion, state.jobs],
   );
 
   /**
@@ -337,8 +364,23 @@ export default function ClockScreen() {
             </Text>
           </View>
           <Text style={styles.figure}>{formatFigure(home?.hoursWorkedLabel)}</Text>
-          {home && home.breakMinutes > 0 && (
-            <Text style={styles.dat}>{home.breakMinutes} min unpaid break</Text>
+          {/*
+            Anything already taken out of the figure above is named here. A
+            worker who is short half an hour and cannot see why has no way to
+            tell a deduction from a bug, and the auto-deducted lunch is the one
+            nobody pressed a button for.
+          */}
+          {home && (home.breakMinutes > 0 || home.autoLunchMinutes > 0) && (
+            <Text style={styles.dat}>
+              {[
+                home.breakMinutes > 0 ? `${home.breakMinutes} min unpaid break` : null,
+                home.autoLunchMinutes > 0
+                  ? `${home.autoLunchMinutes} min lunch deducted automatically`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </Text>
           )}
         </View>
 

@@ -6,6 +6,9 @@
     "paths": {
       "@skelclock/core": [
         "../../packages/core/src/index.ts"
+      ],
+      "@skelclock/contracts": [
+        "../../packages/contracts/src/index.ts"
       ]
     }
   },

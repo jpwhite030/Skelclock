@@ -10,11 +10,12 @@
  * does before building — marking on the ground where every standard lands.
  */
 
-import { listSites } from '@skelclock/server';
+import { listSiteExclusions, listSites } from '@skelclock/server';
 
 import { db } from '../../lib/db';
 import { getDashboardSession } from '../../lib/session';
 import { NoSession, SessionWarning } from '../../components/session-state';
+import { SiteAccessPanel } from './site-access-panel';
 import { SitesMapLoader } from './sites-map-loader';
 
 export const dynamic = 'force-dynamic';
@@ -25,6 +26,14 @@ export default async function SitesPage() {
 
   const sites = await listSites(db, { companyId: session.companyId });
   const canEdit = session.role === 'admin' || session.role === 'supervisor';
+
+  const [exclusions, employees] = await Promise.all([
+    listSiteExclusions(db, { companyId: session.companyId }),
+    db.query<{ id: string; full_name: string }>(
+      'select id, full_name from employee where company_id = $1 and active order by full_name',
+      [session.companyId],
+    ),
+  ]);
 
   const placed = sites.filter((s) => s.latitude != null && s.longitude != null).length;
   const unplaced = sites.length - placed;
@@ -70,6 +79,13 @@ export default async function SitesPage() {
       </div>
 
       <SitesMapLoader sites={sites} canEdit={canEdit} />
+
+      <SiteAccessPanel
+        sites={sites}
+        exclusions={exclusions}
+        employees={employees.rows.map((r) => ({ id: r.id, fullName: r.full_name }))}
+        canEdit={canEdit}
+      />
     </main>
   );
 }

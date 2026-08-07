@@ -21,6 +21,8 @@ export interface DashboardSession {
   companyId: string;
   companyName: string;
   appUserId: string | null;
+  /** Null for a login with no linked employee row (e.g. an office-only admin). */
+  employeeId: string | null;
   role: 'worker' | 'supervisor' | 'admin';
   fullName: string | null;
   /** True when running on the development fallback rather than a real login. */
@@ -48,12 +50,13 @@ export async function getDashboardSession(): Promise<DashboardSession | null> {
       const row = await one<{
         id: string;
         company_id: string;
+        employee_id: string | null;
         role: DashboardSession['role'];
         full_name: string | null;
         company_name: string;
       }>(
         db,
-        `select u.id, u.company_id, u.role, e.full_name, c.name as company_name
+        `select u.id, u.company_id, u.employee_id, u.role, e.full_name, c.name as company_name
            from app_user u
            join company c on c.id = u.company_id
            left join employee e on e.id = u.employee_id
@@ -66,6 +69,7 @@ export async function getDashboardSession(): Promise<DashboardSession | null> {
           companyId: row.company_id,
           companyName: row.company_name,
           appUserId: row.id,
+          employeeId: row.employee_id,
           role: row.role,
           fullName: row.full_name,
           unauthenticated: false,
@@ -87,6 +91,7 @@ export async function getDashboardSession(): Promise<DashboardSession | null> {
     companyId: company.id,
     companyName: company.name,
     appUserId: null,
+    employeeId: null,
     role: 'admin',
     fullName: null,
     unauthenticated: true,

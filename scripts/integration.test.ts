@@ -13,7 +13,9 @@ import { newIdempotencyKey, type ClockEventInput } from '@skelclock/core';
 import { MockOdooAdapter, DEMO_EMPLOYEE, DEMO_JOB } from '@skelclock/odoo';
 import {
   addMissingEvent,
+  addSiteExclusion,
   approveTimesheet,
+  canManageEmployee,
   clockCrew,
   confirmSuggestedEvent,
   confirmTimesheet,
@@ -21,22 +23,31 @@ import {
   dismissSuggestedEvent,
   DbError,
   enqueueTimesheetPush,
+  excludedSiteIds,
   getAuditTrail,
+  getCompanySettings,
   getWorkerHome,
   getWorkingNow,
   importEmployees,
   importJobs,
   ingestEvents,
+  isEmployeeExcludedFromSite,
   listExceptions,
   listPendingSuggestions,
   listSyncJobs,
   listTimesheets,
   lockTimesheet,
   normaliseMobile,
+  one,
+  removeSiteExclusion,
   reopenTimesheet,
   retrySyncJob,
   runSyncWorker,
   SuggestionError,
+  supervises,
+  updateCompanySettings,
+  voidEvent,
+  WorkflowError,
   type Db,
 } from '@skelclock/server';
 
@@ -1401,6 +1412,10 @@ test('Phase 3: an auto_geofence clock-in lands as a suggestion, invisible until 
           eventType: 'clock_in',
           deviceTime: '2026-08-04T06:00:00Z',
           clockMethod: 'auto_geofence',
+          // Loose enough to stay on the tap-to-confirm path — these tests are
+          // about the suggestion mechanics, not the auto-confirm decision
+          // itself (see the "auto-confirm" tests below for that).
+          gpsAccuracyM: 45,
         }),
       ],
     });
@@ -1444,6 +1459,10 @@ test('Phase 3: confirming a suggestion makes it count', async () => {
           eventType: 'clock_in',
           deviceTime: '2026-08-04T06:00:00Z',
           clockMethod: 'auto_geofence',
+          // Loose enough to stay on the tap-to-confirm path — these tests are
+          // about the suggestion mechanics, not the auto-confirm decision
+          // itself (see the "auto-confirm" tests below for that).
+          gpsAccuracyM: 45,
         }),
       ],
     });
@@ -1488,6 +1507,10 @@ test('Phase 3: dismissing a suggestion voids it and it never counts', async () =
           eventType: 'clock_in',
           deviceTime: '2026-08-04T06:00:00Z',
           clockMethod: 'auto_geofence',
+          // Loose enough to stay on the tap-to-confirm path — these tests are
+          // about the suggestion mechanics, not the auto-confirm decision
+          // itself (see the "auto-confirm" tests below for that).
+          gpsAccuracyM: 45,
         }),
       ],
     });
@@ -1540,6 +1563,10 @@ test('Phase 3: dismissing a suggestion requires a reason', async () => {
           eventType: 'clock_in',
           deviceTime: '2026-08-04T06:00:00Z',
           clockMethod: 'auto_geofence',
+          // Loose enough to stay on the tap-to-confirm path — these tests are
+          // about the suggestion mechanics, not the auto-confirm decision
+          // itself (see the "auto-confirm" tests below for that).
+          gpsAccuracyM: 45,
         }),
       ],
     });
@@ -1574,6 +1601,10 @@ test('Phase 3: a worker cannot confirm another employee\'s suggestion', async ()
           eventType: 'clock_in',
           deviceTime: '2026-08-04T06:00:00Z',
           clockMethod: 'auto_geofence',
+          // Loose enough to stay on the tap-to-confirm path — these tests are
+          // about the suggestion mechanics, not the auto-confirm decision
+          // itself (see the "auto-confirm" tests below for that).
+          gpsAccuracyM: 45,
         }),
       ],
     });
@@ -1602,6 +1633,666 @@ test('Phase 3: a worker cannot confirm another employee\'s suggestion', async ()
       now: NOW,
     });
     assert.equal(home.clockState, 'off');
+  } finally {
+    await close();
+  }
+});
+
+// --- Phase 3: auto-confirm, debounce, ambiguity -----------------------------
+// "Tap is a last resort" - most geofence-raised events should not need one.
+// These use the default clockEvent() fixture (dead-centre on SITE, 8m
+// accuracy) precisely because that is now confident and unambiguous enough
+// to skip confirmation; the tests above deliberately loosen accuracy to stay
+// on the tap-to-confirm path instead.
+
+test('Phase 3: a confident, unambiguous auto-geofence clock-in lands live, no tap needed', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    const result = await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [
+        clockEvent(fx, {
+          eventType: 'clock_in',
+          deviceTime: '2026-08-04T06:00:00Z',
+          clockMethod: 'auto_geofence',
+        }),
+      ],
+    });
+
+    const outcome = result.outcomes[0]!;
+    assert.equal(outcome.status, 'created');
+    assert.equal(outcome.status === 'created' && outcome.autoConfirmed, true);
+
+    const row = await db.query<{ is_suggested: boolean }>(
+      'select is_suggested from attendance_event where employee_id = $1',
+      [fx.employeeId],
+    );
+    assert.equal(row.rows[0]!.is_suggested, false);
+
+    // Counts immediately - no confirm step in between.
+    const home = await getWorkerHome(db, {
+      companyId: fx.companyId,
+      employeeId: fx.employeeId,
+      workDate: '2026-08-04',
+      now: NOW,
+    });
+    assert.equal(home.clockState, 'working');
+
+    const suggestions = await listPendingSuggestions(db, {
+      companyId: fx.companyId,
+      employeeId: fx.employeeId,
+    });
+    assert.equal(suggestions.length, 0);
+  } finally {
+    await close();
+  }
+});
+
+test('Phase 3: a loose fix still needs a tap even standing on site', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    const result = await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [
+        clockEvent(fx, {
+          eventType: 'clock_in',
+          deviceTime: '2026-08-04T06:00:00Z',
+          clockMethod: 'auto_geofence',
+          gpsAccuracyM: 60,
+        }),
+      ],
+    });
+
+    const outcome = result.outcomes[0]!;
+    assert.equal(outcome.status === 'created' && outcome.autoConfirmed, false);
+  } finally {
+    await close();
+  }
+});
+
+test('Phase 3: a bouncing fix at the fence edge is folded into the first trigger, not doubled', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    // Loose accuracy on both, deliberately: an auto-confirmed first event
+    // would already be blocked from a second clock-in by the ordinary
+    // "already clocked in" state-machine check (it is live, so
+    // orderedLiveEvents counts it) - that is a real safety net, but it is not
+    // the one this test is checking. Keeping the first event a suggestion
+    // (excluded from state until confirmed) is what actually exercises the
+    // debounce path: the bounce would otherwise pass the state machine too,
+    // since a still-pending suggestion has not moved the confirmed state.
+    const bounce = {
+      eventType: 'clock_in' as const,
+      clockMethod: 'auto_geofence' as const,
+      gpsAccuracyM: 60,
+    };
+    const result = await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [
+        clockEvent(fx, { ...bounce, deviceTime: '2026-08-04T06:00:00Z' }),
+        // Same job, same event type, 3 minutes later - well inside the
+        // debounce window - as if the OS fired Enter/Exit/Enter in a row.
+        clockEvent(fx, { ...bounce, deviceTime: '2026-08-04T06:03:00Z' }),
+      ],
+    });
+
+    assert.equal(result.outcomes[0]!.status, 'created');
+    assert.equal(result.outcomes[1]!.status, 'duplicate');
+
+    const rows = await db.query<{ id: string }>(
+      "select id from attendance_event where employee_id = $1 and event_type = 'clock_in'",
+      [fx.employeeId],
+    );
+    assert.equal(rows.rows.length, 1);
+  } finally {
+    await close();
+  }
+});
+
+test('Phase 3: two sites at once never auto-confirms, and the worker picks which one on confirm', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    const otherSite = (await one<{ id: string }>(
+      db,
+      `insert into site (company_id, name, address, latitude, longitude, geofence_radius_m)
+       values ($1, 'Adjacent yard', 'Next door', $2, $3, 70) returning id`,
+      [fx.companyId, SITE.latitude, SITE.longitude],
+    ))!;
+    const otherJob = (await one<{ id: string }>(
+      db,
+      `insert into job (company_id, odoo_model, odoo_id, job_number, customer_name, site_id, status)
+       values ($1, 'project.project', 9911, '9911', 'Neighbouring Co', $2, 'active') returning id`,
+      [fx.companyId, otherSite.id],
+    ))!;
+
+    const result = await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [
+        clockEvent(fx, {
+          eventType: 'clock_in',
+          deviceTime: '2026-08-04T06:00:00Z',
+          clockMethod: 'auto_geofence',
+          candidateJobIds: [fx.jobId, otherJob.id],
+        }),
+      ],
+    });
+
+    // Never auto-confirmed while ambiguous, no matter how good the fix.
+    assert.equal(result.outcomes[0]!.status === 'created' && result.outcomes[0]!.autoConfirmed, false);
+
+    const row = await db.query<{ candidate_job_ids: string[] | null; job_id: string }>(
+      'select candidate_job_ids, job_id from attendance_event where employee_id = $1',
+      [fx.employeeId],
+    );
+    assert.deepEqual(new Set(row.rows[0]!.candidate_job_ids), new Set([fx.jobId, otherJob.id]));
+
+    const suggestion = (
+      await listPendingSuggestions(db, { companyId: fx.companyId, employeeId: fx.employeeId })
+    )[0]!;
+    assert.deepEqual(new Set(suggestion.candidateJobIds), new Set([fx.jobId, otherJob.id]));
+
+    // Picking a job that was not one of the candidates is refused.
+    await assert.rejects(
+      () =>
+        confirmSuggestedEvent(db, {
+          companyId: fx.companyId,
+          employeeId: fx.employeeId,
+          eventId: suggestion.id,
+          actorUserId: fx.workerUserId,
+          // A syntactically valid id, but not one of the two candidates above.
+          jobId: '00000000-0000-0000-0000-000000000000',
+          now: NOW,
+        }),
+      (error: unknown) => error instanceof SuggestionError && error.code === 'invalid_candidate_job',
+    );
+
+    // Picking the other candidate confirms it onto that job.
+    await confirmSuggestedEvent(db, {
+      companyId: fx.companyId,
+      employeeId: fx.employeeId,
+      eventId: suggestion.id,
+      actorUserId: fx.workerUserId,
+      jobId: otherJob.id,
+      now: NOW,
+    });
+
+    const confirmed = await db.query<{ is_suggested: boolean; job_id: string }>(
+      'select is_suggested, job_id from attendance_event where id = $1',
+      [suggestion.id],
+    );
+    assert.equal(confirmed.rows[0]!.is_suggested, false);
+    assert.equal(confirmed.rows[0]!.job_id, otherJob.id);
+  } finally {
+    await close();
+  }
+});
+
+// --- operating hours ---------------------------------------------------------
+// fx.companyId's timezone is Australia/Sydney (seedFixture), 2026-08-04 is
+// deep in AEST (UTC+10, no daylight saving) - local HH:MM = UTC HH:MM + 10.
+
+test('a clock-in outside operating hours is refused', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await updateCompanySettings(db, {
+      companyId: fx.companyId,
+      autoLunchEnabled: false,
+      autoLunchThresholdMinutes: 300,
+      autoLunchDurationMinutes: 30,
+      travelAllocation: 'unallocated',
+      operatingHoursStart: '06:00',
+      operatingHoursEnd: '18:00',
+    });
+
+    const result = await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [
+        // 04:00 local (2026-08-03T18:00Z + 10h), well before 06:00.
+        clockEvent(fx, { eventType: 'clock_in', deviceTime: '2026-08-03T18:00:00Z' }),
+      ],
+    });
+
+    assert.equal(result.outcomes[0]!.status, 'rejected');
+    assert.equal(
+      result.outcomes[0]!.status === 'rejected' && result.outcomes[0]!.code,
+      'outside_operating_hours',
+    );
+
+    const rows = await db.query('select id from attendance_event where employee_id = $1', [
+      fx.employeeId,
+    ]);
+    assert.equal(rows.rows.length, 0);
+  } finally {
+    await close();
+  }
+});
+
+test('a clock-in inside operating hours is accepted', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await updateCompanySettings(db, {
+      companyId: fx.companyId,
+      autoLunchEnabled: false,
+      autoLunchThresholdMinutes: 300,
+      autoLunchDurationMinutes: 30,
+      travelAllocation: 'unallocated',
+      operatingHoursStart: '06:00',
+      operatingHoursEnd: '18:00',
+    });
+
+    const result = await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      // 12:00 local.
+      events: [clockEvent(fx, { eventType: 'clock_in', deviceTime: '2026-08-04T02:00:00Z' })],
+    });
+
+    assert.equal(result.outcomes[0]!.status, 'created');
+  } finally {
+    await close();
+  }
+});
+
+test('operating hours never block a clock-out, even after hours', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await updateCompanySettings(db, {
+      companyId: fx.companyId,
+      autoLunchEnabled: false,
+      autoLunchThresholdMinutes: 300,
+      autoLunchDurationMinutes: 30,
+      travelAllocation: 'unallocated',
+      operatingHoursStart: '06:00',
+      operatingHoursEnd: '18:00',
+    });
+
+    // Clocked in inside hours (12:00 local)...
+    await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [clockEvent(fx, { eventType: 'clock_in', deviceTime: '2026-08-04T02:00:00Z' })],
+    });
+
+    // ...clocking out at 20:00 local, two hours past closing, must still work.
+    const result = await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [clockEvent(fx, { eventType: 'clock_out', deviceTime: '2026-08-04T10:00:00Z' })],
+    });
+
+    assert.equal(result.outcomes[0]!.status, 'created');
+  } finally {
+    await close();
+  }
+});
+
+test('a site override wins over the company default operating hours', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await updateCompanySettings(db, {
+      companyId: fx.companyId,
+      autoLunchEnabled: false,
+      autoLunchThresholdMinutes: 300,
+      autoLunchDurationMinutes: 30,
+      travelAllocation: 'unallocated',
+      operatingHoursStart: '06:00',
+      operatingHoursEnd: '18:00',
+    });
+    // This site runs earlier - 04:00 to 12:00 local.
+    await db.query('update site set operating_hours_start = $2, operating_hours_end = $3 where id = $1', [
+      fx.siteId,
+      '04:00',
+      '12:00',
+    ]);
+
+    // 05:00 local - outside the 06:00-18:00 company default, but inside the
+    // site's own 04:00-12:00.
+    const result = await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [clockEvent(fx, { eventType: 'clock_in', deviceTime: '2026-08-03T19:00:00Z' })],
+    });
+
+    assert.equal(result.outcomes[0]!.status, 'created');
+  } finally {
+    await close();
+  }
+});
+
+test('an overnight operating window wraps past midnight correctly', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    // A site that only runs overnight: 22:00-06:00.
+    await updateCompanySettings(db, {
+      companyId: fx.companyId,
+      autoLunchEnabled: false,
+      autoLunchThresholdMinutes: 300,
+      autoLunchDurationMinutes: 30,
+      travelAllocation: 'unallocated',
+      operatingHoursStart: '22:00',
+      operatingHoursEnd: '06:00',
+    });
+
+    // 23:00 local - after 22:00, inside the wrapped window.
+    const late = await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [clockEvent(fx, { eventType: 'clock_in', deviceTime: '2026-08-04T13:00:00Z' })],
+    });
+    assert.equal(late.outcomes[0]!.status, 'created');
+
+    // 12:00 local the same day - the middle of the day, outside 22:00-06:00.
+    const midday = await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [
+        clockEvent(fx, {
+          eventType: 'clock_in',
+          deviceTime: '2026-08-04T02:00:00Z',
+          idempotencyKey: newIdempotencyKey('test-device-2'),
+        }),
+      ],
+    });
+    assert.equal(midday.outcomes[0]!.status, 'rejected');
+  } finally {
+    await close();
+  }
+});
+
+test('a supervisor filling in a missed clock-in bypasses operating hours', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await updateCompanySettings(db, {
+      companyId: fx.companyId,
+      autoLunchEnabled: false,
+      autoLunchThresholdMinutes: 300,
+      autoLunchDurationMinutes: 30,
+      travelAllocation: 'unallocated',
+      operatingHoursStart: '06:00',
+      operatingHoursEnd: '18:00',
+    });
+
+    // 04:00 local, well outside hours - addMissingEvent is a deliberate
+    // supervisor act (clock_method 'supervisor'), not the worker's own clock.
+    const timesheet = await one<{ id: string }>(
+      db,
+      `insert into timesheet (company_id, employee_id, work_date) values ($1,$2,$3) returning id`,
+      [fx.companyId, fx.employeeId, '2026-08-04'],
+    );
+    const result = await addMissingEvent(db, {
+      companyId: fx.companyId,
+      employeeId: fx.employeeId,
+      timesheetId: timesheet!.id,
+      eventType: 'clock_in',
+      deviceTime: '2026-08-03T18:00:00Z',
+      jobId: fx.jobId,
+      actorUserId: fx.supervisorUserId,
+      reason: 'Worker forgot to clock in, confirmed with them by phone',
+      now: NOW,
+    });
+    assert.ok(result.eventId);
+  } finally {
+    await close();
+  }
+});
+
+// --- site exclusion -----------------------------------------------------------
+
+test('an employee excluded from a site cannot clock in there, manually or automatically', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await addSiteExclusion(db, {
+      companyId: fx.companyId,
+      employeeId: fx.employeeId,
+      siteId: fx.siteId,
+      reason: 'Lives next door - false positives every day',
+      createdBy: fx.supervisorUserId,
+    });
+
+    const manual = await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [clockEvent(fx, { eventType: 'clock_in', deviceTime: '2026-08-04T06:00:00Z' })],
+    });
+    assert.equal(manual.outcomes[0]!.status, 'rejected');
+    assert.equal(
+      manual.outcomes[0]!.status === 'rejected' && manual.outcomes[0]!.code,
+      'site_excluded',
+    );
+
+    const auto = await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [
+        clockEvent(fx, {
+          eventType: 'clock_in',
+          deviceTime: '2026-08-04T06:00:01Z',
+          clockMethod: 'auto_geofence',
+          idempotencyKey: newIdempotencyKey('test-device-3'),
+        }),
+      ],
+    });
+    assert.equal(auto.outcomes[0]!.status, 'rejected');
+  } finally {
+    await close();
+  }
+});
+
+test('removing an exclusion lets the employee clock in again', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    const before = await addSiteExclusion(db, {
+      companyId: fx.companyId,
+      employeeId: fx.employeeId,
+      siteId: fx.siteId,
+      reason: 'Temporary - checking a false-positive report',
+      createdBy: fx.supervisorUserId,
+    }).then(() => excludedSiteIds(db, { employeeId: fx.employeeId }));
+    assert.equal(before.has(fx.siteId), true);
+
+    const row = await one<{ id: string }>(
+      db,
+      'select id from employee_site_exclusion where employee_id = $1 and site_id = $2',
+      [fx.employeeId, fx.siteId],
+    );
+    await removeSiteExclusion(db, { companyId: fx.companyId, exclusionId: row!.id });
+
+    assert.equal(await isEmployeeExcludedFromSite(db, { employeeId: fx.employeeId, siteId: fx.siteId }), false);
+
+    const result = await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [clockEvent(fx, { eventType: 'clock_in', deviceTime: '2026-08-04T06:00:00Z' })],
+    });
+    assert.equal(result.outcomes[0]!.status, 'created');
+  } finally {
+    await close();
+  }
+});
+
+// --- supervisor scope (authz.ts) ----------------------------------------------
+
+test('a supervisor supervises their direct report', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    // seedFixture links fx.employeeId's supervisor_employee_id to fx.supervisorEmployeeId.
+    assert.equal(
+      await supervises(db, {
+        supervisorEmployeeId: fx.supervisorEmployeeId,
+        targetEmployeeId: fx.employeeId,
+      }),
+      true,
+    );
+  } finally {
+    await close();
+  }
+});
+
+test('a supervisor does not supervise an unrelated employee', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    assert.equal(
+      await supervises(db, {
+        supervisorEmployeeId: fx.employeeId, // not a supervisor of anyone
+        targetEmployeeId: fx.supervisorEmployeeId,
+      }),
+      false,
+    );
+  } finally {
+    await close();
+  }
+});
+
+test('canManageEmployee: admin can act on anyone, supervisor only their reports, worker never', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    assert.equal(
+      await canManageEmployee(db, {
+        role: 'admin',
+        callerEmployeeId: null,
+        targetEmployeeId: fx.employeeId,
+      }),
+      true,
+    );
+    assert.equal(
+      await canManageEmployee(db, {
+        role: 'supervisor',
+        callerEmployeeId: fx.supervisorEmployeeId,
+        targetEmployeeId: fx.employeeId,
+      }),
+      true,
+    );
+    assert.equal(
+      await canManageEmployee(db, {
+        role: 'supervisor',
+        callerEmployeeId: fx.supervisorEmployeeId,
+        targetEmployeeId: fx.supervisorEmployeeId, // not even themselves
+      }),
+      false,
+    );
+    assert.equal(
+      await canManageEmployee(db, {
+        role: 'worker',
+        callerEmployeeId: fx.employeeId,
+        targetEmployeeId: fx.employeeId,
+      }),
+      false,
+    );
+  } finally {
+    await close();
+  }
+});
+
+// --- voidEvent -----------------------------------------------------------------
+
+test('voidEvent removes an event with no replacement, and requires a reason', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    const result = await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [clockEvent(fx, { eventType: 'clock_in', deviceTime: '2026-08-04T06:00:00Z' })],
+    });
+    const created = result.outcomes[0]!;
+    assert.equal(created.status, 'created');
+    const eventId = created.status === 'created' ? created.eventId : '';
+
+    await assert.rejects(
+      () => voidEvent(db, { eventId, actorUserId: fx.supervisorUserId, reason: '  ', now: NOW }),
+      (error: unknown) => error instanceof WorkflowError && error.code === 'reason_required',
+    );
+
+    await voidEvent(db, {
+      eventId,
+      actorUserId: fx.supervisorUserId,
+      reason: 'Duplicate manual entry, worker double-tapped',
+      now: NOW,
+    });
+
+    const row = await db.query<{ voided_at: Date | null; void_reason: string | null }>(
+      'select voided_at, void_reason from attendance_event where id = $1',
+      [eventId],
+    );
+    assert.ok(row.rows[0]!.voided_at);
+    assert.equal(row.rows[0]!.void_reason, 'Duplicate manual entry, worker double-tapped');
+
+    const home = await getWorkerHome(db, {
+      companyId: fx.companyId,
+      employeeId: fx.employeeId,
+      workDate: '2026-08-04',
+      now: NOW,
+    });
+    assert.equal(home.clockState, 'off');
+  } finally {
+    await close();
+  }
+});
+
+// --- payroll settings wiring (segments.ts options already unit-tested in
+// packages/core/src/core.test.ts - these confirm the setting actually reaches
+// buildSegments through getWorkerHome, not the segment math itself) ----------
+
+test('auto-lunch, enabled company-wide, reduces the worker home screen\'s paid hours', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await updateCompanySettings(db, {
+      companyId: fx.companyId,
+      autoLunchEnabled: true,
+      autoLunchThresholdMinutes: 300,
+      autoLunchDurationMinutes: 30,
+      travelAllocation: 'unallocated',
+      operatingHoursStart: null,
+      operatingHoursEnd: null,
+    });
+
+    await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [
+        clockEvent(fx, { eventType: 'clock_in', deviceTime: '2026-08-04T06:00:00Z' }),
+        clockEvent(fx, {
+          eventType: 'clock_out',
+          deviceTime: '2026-08-04T14:00:00Z', // 8h, no break clocked
+          idempotencyKey: newIdempotencyKey('test-device-4'),
+        }),
+      ],
+    });
+
+    const home = await getWorkerHome(db, {
+      companyId: fx.companyId,
+      employeeId: fx.employeeId,
+      workDate: '2026-08-04',
+      now: NOW,
+    });
+    assert.equal(home.minutesWorked, 450); // 480 - 30
+  } finally {
+    await close();
+  }
+});
+
+test('travel allocation, set to first_site, reaches the worker home screen through getWorkerHome', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    const settings = await getCompanySettings(db, fx.companyId);
+    assert.equal(settings.travelAllocation, 'unallocated'); // default, unchanged behaviour
+
+    await updateCompanySettings(db, {
+      companyId: fx.companyId,
+      autoLunchEnabled: false,
+      autoLunchThresholdMinutes: 300,
+      autoLunchDurationMinutes: 30,
+      travelAllocation: 'first_site',
+      operatingHoursStart: null,
+      operatingHoursEnd: null,
+    });
+
+    const updated = await getCompanySettings(db, fx.companyId);
+    assert.equal(updated.travelAllocation, 'first_site');
   } finally {
     await close();
   }

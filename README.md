@@ -6,6 +6,9 @@ office reviews and approves, and approved hours are pushed into Odoo.
 Odoo stays the source of truth for employees and jobs. This system owns the
 attendance record and nothing else.
 
+This file is the quick start. **The full developer handbook — architecture,
+data model, every pipeline and invariant — is [DEVELOPERS.md](DEVELOPERS.md).**
+
 ---
 
 ## Run it right now
@@ -15,7 +18,7 @@ No credentials, no Docker, no Odoo account needed:
 ```bash
 npm install
 npm run poc      # the 7-step proof of concept, end to end
-npm test         # 113 tests
+npm test         # 159 tests
 ```
 
 `npm run poc` runs the First Engineering Deliverable from the brief against an
@@ -108,24 +111,32 @@ EXPO_PUBLIC_API_URL=http://192.168.1.20:3000 npx expo run:ios --device
 ```
 packages/core      Domain logic. No I/O, no database, runs on the phone and
                    the server alike: the clock state machine, geofence maths,
-                   segment building, exception detection, idempotency keys.
+                   segment building, exception detection, idempotency keys,
+                   operating-hours window maths.
+
+packages/contracts The wire contract between web and mobile. Zod schemas that
+                   both the API routes and the phone validate against, so the
+                   two apps cannot drift apart silently.
 
 packages/odoo      Everything that knows an Odoo field name. Adapter interface,
                    live JSON-RPC client, mock adapter, and mapping.ts — the one
                    file that changes when the Odoo questions are answered.
 
 packages/server    Service layer. Ingest, timesheet rebuild, approval ladder,
-                   corrections, crew clocking, the sync queue, dashboard reads.
+                   corrections, crew clocking, suggestions, payroll settings,
+                   authz, the sync queue, dashboard reads.
 
-apps/mobile        Expo app. Clock screen, offline SQLite queue, GPS capture.
+apps/mobile        Expo app. Clock screen, live site map, offline SQLite queue,
+                   GPS capture, shift tracking, background geofence clocking.
                    auth.ts is the one sign-in interface the screens see, with
                    Supabase behind it, or demo sign-in when it is unconfigured.
-apps/web           Next.js. The mobile API plus the four office screens.
+apps/web           Next.js. The mobile API plus the six office screens.
 
-supabase/migrations  The schema. 0001-0004 are portable Postgres; 1001 is
+supabase/migrations  The schema. 0001-0006 are portable Postgres; 1001 is
                      Supabase-only (auth linkage and row-level security).
 
-scripts/           poc.ts, odoo-probe.ts, local-db.ts, integration.test.ts
+scripts/           poc.ts, odoo-probe.ts, local-db.ts, integration.test.ts,
+                   shots.ts (screenshots every dashboard screen)
 ```
 
 ---
@@ -165,7 +176,7 @@ distinguishable in Odoo's own audit trail.
 ## Deploying
 
 1. **Database.** Create a Supabase project in `ap-southeast-2` (Sydney). Apply
-   `supabase/migrations/*.sql` in filename order — all five, including `1001`,
+   `supabase/migrations/*.sql` in filename order — all seven, including `1001`,
    which is the one that turns on row-level security.
 2. **Web.** Deploy `apps/web` with `DATABASE_URL`, `SUPABASE_URL`,
    `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` and the Odoo variables set.
@@ -318,25 +329,33 @@ Phase 1 of the brief is complete and tested:
 - Offline queue with idempotency, on-device SQLite, automatic flush
 - Approval ladder: draft → worker confirmed → supervisor approved → synced → locked
 - Odoo attendance push with retry, backoff, and a visible failure queue
-- Admin dashboard: Working Now, Timesheets, Exceptions, Odoo Sync
+- Admin dashboard: Working Now, Timesheets, Exceptions, Sites, Odoo Sync, Settings
 - Full audit trail on every attendance change
 
 Phase 2 exists in the service layer and is covered by tests — breaks, job and
-activity switching, crew clocking, supervisor corrections, approvals,
-exceptions — but only the worker-facing screens are built. **The supervisor's
-mobile view is not yet built**; a supervisor can do all of it through the API
-and the service layer, but not yet through a screen designed for them.
+activity switching, crew clocking, approvals, exceptions — and supervisors
+correct, void and add events from the web timesheet detail screen. **The
+supervisor's mobile view is not yet built**; crew clocking works through the
+service layer but has no phone screen.
 
-Phase 3 (automatic geofence clocking) is not started. The schema is ready for
-it: `attendance_event.is_suggested` exists so a geofence-raised event lands as
-a suggestion needing confirmation, never as an irreversible payroll record.
+Phase 3 (automatic geofence clocking) is built: the phone watches site
+geofences in the background (with recorded worker consent), a walk-on raises
+an `auto_geofence` event, and the server either auto-confirms it (single
+site, inside the fence, GPS accuracy ≤ 30 m) or lands it as a suggestion the
+worker taps to confirm — ambiguous multi-site triggers always ask, with a
+site picker. Nothing auto-created silently becomes payroll otherwise.
+
+On top of the brief: configurable payroll policy (auto lunch deduction,
+travel allocation, company operating hours with per-site overrides, enforced
+at clock-in) and per-employee site lockouts. See
+[DEVELOPERS.md](DEVELOPERS.md) for how each works.
 
 ---
 
 ## Testing
 
 ```bash
-npm test          # everything: 113 tests
+npm test          # everything: 159 tests
 npm run test:unit # domain logic only, no database, ~1s
 ```
 

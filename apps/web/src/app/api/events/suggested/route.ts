@@ -1,3 +1,4 @@
+import { pendingSuggestionsResponseSchema } from '@skelclock/contracts';
 import { listPendingSuggestions } from '@skelclock/server';
 
 import { db } from '../../../../lib/db';
@@ -20,13 +21,15 @@ export async function GET(request: Request): Promise<Response> {
     });
 
     return Response.json(
-      suggestions.map((s) => ({
-        id: s.id,
-        eventType: s.eventType,
-        jobId: s.jobId,
-        siteName: s.siteName,
-        deviceTime: s.deviceTime,
-      })),
+      pendingSuggestionsResponseSchema.parse(
+        suggestions.map((s) => ({
+          id: s.id,
+          eventType: s.eventType,
+          jobId: s.jobId,
+          siteName: s.siteName,
+          deviceTime: s.deviceTime,
+        })),
+      ),
       { headers: { 'Cache-Control': 'no-store' } },
     );
   } catch (error) {

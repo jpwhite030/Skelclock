@@ -161,7 +161,7 @@ create table site (
   address             text,
   latitude            double precision,
   longitude           double precision,
-  geofence_radius_m   integer not null default 200,
+  geofence_radius_m   integer not null default 70,
   created_at          timestamptz not null default now(),
   updated_at          timestamptz not null default now(),
 

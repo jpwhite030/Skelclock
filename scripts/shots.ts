@@ -25,6 +25,7 @@ const PAGES = [
   { path: '/exceptions', name: 'exceptions' },
   { path: '/sites', name: 'sites' },
   { path: '/sync', name: 'odoo-sync' },
+  { path: '/settings', name: 'settings' },
 ] as const;
 
 const VIEWPORTS = [
