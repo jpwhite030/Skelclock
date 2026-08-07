@@ -85,7 +85,8 @@ begin
     'company','employee','app_user','crew','crew_member','site','job',
     'work_activity','job_activity','assignment','timesheet','attendance_event',
     'time_segment','correction','approval','attendance_exception',
-    'odoo_sync_job','audit_log','device'
+    'odoo_sync_job','audit_log','device','geofence_consent_event',
+    'employee_site_exclusion'
   ] loop
     execute format('alter table %I enable row level security', t);
     execute format('alter table %I force row level security', t);
@@ -100,11 +101,23 @@ $$;
 create policy company_read on company for select
   using (id = app.current_company_id());
 
+-- Payroll policy (auto-lunch, travel allocation, operating hours) is an
+-- admin act — it changes how every employee's pay is computed company-wide.
+create policy company_settings_write on company for update
+  using (id = app.current_company_id() and app.is_admin())
+  with check (id = app.current_company_id() and app.is_admin());
+
 create policy job_read on job for select
   using (company_id = app.current_company_id());
 
 create policy site_read on site for select
   using (company_id = app.current_company_id());
+
+-- Site-level edits (pin, radius, operating-hours override) are supervisor or
+-- admin, same authority as saveSiteLocation already requires.
+create policy site_write on site for update
+  using (company_id = app.current_company_id() and (app.is_admin() or app.current_role() = 'supervisor'))
+  with check (company_id = app.current_company_id());
 
 create policy work_activity_read on work_activity for select
   using (company_id = app.current_company_id());
@@ -133,6 +146,35 @@ create policy app_user_self_read on app_user for select
 create policy device_own on device for all
   using (app_user_id = app.current_app_user_id())
   with check (app_user_id = app.current_app_user_id());
+
+-- A worker logs their own consent; a supervisor may read their reports' —
+-- this is the record that stands behind the in-app notice, so the office
+-- needs to be able to show it was given.
+create policy geofence_consent_event_read on geofence_consent_event for select
+  using (company_id = app.current_company_id() and app.can_see_employee(employee_id));
+
+create policy geofence_consent_event_insert on geofence_consent_event for insert
+  with check (
+    company_id = app.current_company_id()
+    and employee_id = app.current_employee_id()
+    and app_user_id = app.current_app_user_id()
+  );
+
+-- Site lockouts: supervisor manages their own reports' exclusions, admin
+-- manages anyone's. A worker may read their own (they should know why a site
+-- doesn't show up for them) but never write.
+create policy employee_site_exclusion_read on employee_site_exclusion for select
+  using (company_id = app.current_company_id() and app.can_see_employee(employee_id));
+
+create policy employee_site_exclusion_write on employee_site_exclusion for all
+  using (
+    company_id = app.current_company_id()
+    and (app.is_admin() or app.supervises(employee_id))
+  )
+  with check (
+    company_id = app.current_company_id()
+    and (app.is_admin() or app.supervises(employee_id))
+  );
 
 -- --- assignments ------------------------------------------------------------
 
