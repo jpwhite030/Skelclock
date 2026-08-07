@@ -71,6 +71,14 @@ export interface ActivityOption {
   isTravel: boolean;
 }
 
+/** Who the current token belongs to, as the server resolves it. */
+export interface MeDto {
+  appUserId: string;
+  employeeId: string | null;
+  fullName: string | null;
+  role: 'worker' | 'supervisor' | 'admin';
+}
+
 /** A geofence-raised clock event awaiting the worker's confirmation. */
 export interface PendingSuggestionDto {
   id: string;
@@ -158,6 +166,10 @@ export class ApiClient implements Transport {
       },
     );
     return outcomes;
+  }
+
+  me(): Promise<MeDto> {
+    return this.request<MeDto>('/api/me');
   }
 
   home(workDate: string): Promise<WorkerHomeDto> {

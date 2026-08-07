@@ -134,7 +134,7 @@ export class SqliteQueueStore implements QueueStore {
     patch: Partial<Pick<QueuedEvent, 'status' | 'attempts' | 'lastError'>>,
   ): Promise<void> {
     const sets: string[] = [];
-    const params: unknown[] = [];
+    const params: (string | number | null)[] = [];
     if (patch.status !== undefined) {
       sets.push('status = ?');
       params.push(patch.status);

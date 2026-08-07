@@ -32,7 +32,7 @@ import { deviceId } from './device';
 import { captureFix } from './location';
 import { EventQueue } from './queue';
 import { SqliteQueueStore } from './sqlite-store';
-import { accessToken, supabase } from './supabase';
+import { accessToken, getSession } from './auth';
 
 export const GEOFENCE_TASK_NAME = 'skelclock-geofence-task';
 
@@ -67,8 +67,7 @@ TaskManager.defineTask(GEOFENCE_TASK_NAME, async ({ data, error }) => {
   const jobId = region.identifier;
   if (!jobId) return;
 
-  const { data: userData } = await supabase.auth.getUser();
-  const employeeId = (userData.user?.user_metadata?.employee_id as string | undefined) ?? null;
+  const employeeId = (await getSession())?.employeeId ?? null;
   // Not signed in (session expired while watching): nothing sensible to attribute this to.
   if (!employeeId) return;
 

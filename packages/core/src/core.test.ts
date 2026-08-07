@@ -1,7 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { distanceMetres, evaluateGeofence, shouldRaiseGeofenceException } from './geo.js';
+import {
+  bearingDegrees,
+  distanceMetres,
+  evaluateGeofence,
+  shouldRaiseGeofenceException,
+} from './geo.js';
 import {
   applyTransition,
   currentShift,
@@ -63,6 +68,38 @@ test('distanceMetres matches a known Sydney baseline', () => {
 test('distanceMetres is zero for identical points', () => {
   const p = { latitude: -33.8, longitude: 151.2 };
   assert.equal(distanceMetres(p, p), 0);
+});
+
+test('bearingDegrees points to the four cardinals', () => {
+  const site = { latitude: -34.4248, longitude: 150.8931 }; // 14 Kembla Street
+
+  const north = bearingDegrees(site, { ...site, latitude: site.latitude + 0.01 });
+  const south = bearingDegrees(site, { ...site, latitude: site.latitude - 0.01 });
+  const east = bearingDegrees(site, { ...site, longitude: site.longitude + 0.01 });
+  const west = bearingDegrees(site, { ...site, longitude: site.longitude - 0.01 });
+
+  assert.ok(Math.abs(north - 0) < 1, `north was ${north.toFixed(1)}`);
+  assert.ok(Math.abs(south - 180) < 1, `south was ${south.toFixed(1)}`);
+  assert.ok(Math.abs(east - 90) < 1, `east was ${east.toFixed(1)}`);
+  assert.ok(Math.abs(west - 270) < 1, `west was ${west.toFixed(1)}`);
+});
+
+test('bearingDegrees is a compass bearing, not a flat arctangent', () => {
+  // Equal degree steps north and east. On a square lat/lng grid this would be
+  // exactly 45°; the real forward azimuth is east of that, because a degree of
+  // longitude is shorter than a degree of latitude this far south.
+  const site = { latitude: -34.4248, longitude: 150.8931 };
+  const b = bearingDegrees(site, {
+    latitude: site.latitude + 0.01,
+    longitude: site.longitude + 0.01,
+  });
+
+  assert.ok(b > 39 && b < 40, `expected ~39.5°, got ${b.toFixed(2)}°`);
+});
+
+test('bearingDegrees returns 0 for identical points rather than NaN', () => {
+  const p = { latitude: -34.4248, longitude: 150.8931 };
+  assert.equal(bearingDegrees(p, p), 0);
 });
 
 test('a worker standing on site is inside the fence', () => {

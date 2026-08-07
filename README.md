@@ -62,6 +62,45 @@ screen is data the system could not actually have produced.
 Set `DATABASE_URL` and it uses that instead. In production a missing
 `DATABASE_URL` is a hard error — the demo path can never be reached there.
 
+## See the phone app
+
+Two terminals. The API first, on port 3000, which is where the app looks:
+
+```bash
+cd apps/web && npx next dev -p 3000
+```
+
+Then build and run the app. `ios/` is generated from `app.json` rather than
+committed, so the first run has a prebuild in it and takes a few minutes:
+
+```bash
+cd apps/mobile
+npx expo prebuild --platform ios
+npx expo run:ios --device "iPhone 17 Pro"
+```
+
+This needs a development build, not Expo Go — the app uses native location,
+SQLite and Keychain modules. `npx expo run:android` is the equivalent.
+
+With no Supabase project configured there is no SMS provider, so the login
+screen switches to **demo mode**: it lists the five seeded workers, and any six
+digits gets you in. The bearer token becomes `demo:+61412555208`, which
+`requireCaller()` resolves straight to that `app_user`. It is a complete
+authentication bypass, so the server refuses those tokens both in production
+and the moment a real `SUPABASE_URL` is configured — see `apps/web/src/lib/auth.ts`.
+
+Signing in as Dean Whitmore puts you on a live shift: job 1032 at 14 Kembla
+Street, hours counting up, and Clock Off / Start Break driving the same queue,
+idempotency and sync path a real handset would.
+
+To run against a real device rather than the simulator, the phone needs a route
+to your Mac — set `EXPO_PUBLIC_API_URL` to its LAN address rather than
+`localhost`:
+
+```bash
+EXPO_PUBLIC_API_URL=http://192.168.1.20:3000 npx expo run:ios --device
+```
+
 ---
 
 ## Layout
@@ -79,6 +118,8 @@ packages/server    Service layer. Ingest, timesheet rebuild, approval ladder,
                    corrections, crew clocking, the sync queue, dashboard reads.
 
 apps/mobile        Expo app. Clock screen, offline SQLite queue, GPS capture.
+                   auth.ts is the one sign-in interface the screens see, with
+                   Supabase behind it, or demo sign-in when it is unconfigured.
 apps/web           Next.js. The mobile API plus the four office screens.
 
 supabase/migrations  The schema. 0001-0004 are portable Postgres; 1001 is
@@ -130,9 +171,11 @@ distinguishable in Odoo's own audit trail.
    `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` and the Odoo variables set.
    Point a cron at `GET /api/sync` every few minutes with the `CRON_SECRET`
    bearer token.
-3. **Mobile.** `cd apps/mobile && npx expo prebuild && npx expo run:android`.
-   This needs a development build, not Expo Go — it uses native location and
-   SQLite modules.
+3. **Mobile.** `cd apps/mobile && npx expo prebuild && npx expo run:ios` (or
+   `run:android`). This needs a development build, not Expo Go — it uses native
+   location, SQLite and Keychain modules. Set `EXPO_PUBLIC_SUPABASE_URL` and
+   `EXPO_PUBLIC_SUPABASE_ANON_KEY` so the app uses real SMS login rather than
+   the demo sign-in, and `EXPO_PUBLIC_API_URL` to point at the deployed web app.
 4. **Seed.** Import employees and jobs from Odoo before anyone tries to log in;
    a login with no matching employee record is refused by design.
 
@@ -172,6 +215,35 @@ one record spanning the whole day would hand payroll a number 30 minutes too
 high, every day. So an unpaid break ends one attendance record and starts
 another, and Odoo's own total comes out equal to our paid hours with no
 reconciliation step. See `packages/odoo/src/attendance-blocks.ts`.
+
+### The phone is SETOUT on paper
+
+The dashboard's drawing language, on the handset: the rosette ladder, the three
+faces, the CAD legend with its meanings intact, and not a rounded corner on
+either screen. `apps/mobile/src/theme.ts` lifts its values from
+`apps/web/src/app/globals.css` rather than re-picking them, because two halves
+of one system that merely resemble each other are worse than either done
+properly.
+
+It uses the **paper** ground rather than the dark one. The dashboard splits
+those by reading time — dark for a glance, paper for the twenty-minute read —
+but a phone breaks the tie on a different axis: this screen is read at arm's
+length in direct sun on a scaffold deck, which is the one condition a dark
+ground fails hardest. SETOUT already specifies the paper inks and the legend
+re-cut for paper, so this is the system's second ground, not a third look.
+
+Two places the phone departs from the drawing, both for the hand:
+
+- **Tap targets are 1.5 rosettes (60px), not one.** A rosette is 40px and a
+  gloved thumb needs 56. The clock button is 3 rosettes. The ladder still
+  governs; the hand sets the floor.
+- **Archivo ships at wdth 75, not 78.** React Native cannot drive a variation
+  axis, so it embeds the nearest genuine width instance rather than squashing
+  the normal width — which is the thing the axis existed to avoid.
+
+Magenta is deliberately absent from the Clock Off button. Knocking off is not
+an exception, and spending the "something has crossed a line" colour on the
+most-pressed control would leave nothing to say when something actually has.
 
 ### GPS never blocks a worker
 

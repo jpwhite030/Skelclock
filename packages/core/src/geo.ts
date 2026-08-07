@@ -67,6 +67,31 @@ export function distanceMetres(a: LatLng, b: LatLng): number {
   return 2 * EARTH_RADIUS_M * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 }
 
+/**
+ * Initial bearing from `a` to `b`, in degrees clockwise from true north.
+ *
+ * Pairs with distanceMetres to place one point relative to another on a plan:
+ * distance gives the radius, this gives the angle. Forward azimuth rather than
+ * the flat arctangent so it stays right at any latitude, which matters because
+ * longitude degrees shrink towards the poles and Wollongong is far enough
+ * south that treating lat/lng as a square grid visibly skews the direction.
+ *
+ * Returns 0 when the two points coincide — a bearing to yourself has no
+ * meaning, and 0 is what a plan draws when there is nothing to point at.
+ */
+export function bearingDegrees(a: LatLng, b: LatLng): number {
+  const lat1 = toRad(a.latitude);
+  const lat2 = toRad(b.latitude);
+  const dLng = toRad(b.longitude - a.longitude);
+
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  if (y === 0 && x === 0) return 0;
+
+  const deg = (Math.atan2(y, x) * 180) / Math.PI;
+  return (deg + 360) % 360;
+}
+
 export function evaluateGeofence(input: GeofenceInput): GeofenceResult {
   const { position, site, radiusM } = input;
   const accuracyM = input.accuracyM ?? 0;

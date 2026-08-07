@@ -42,7 +42,7 @@ import {
 } from './geofence';
 import { EventQueue, type QueuedEvent } from './queue';
 import { SqliteQueueStore } from './sqlite-store';
-import { accessToken } from './supabase';
+import { accessToken } from './auth';
 
 export interface ClockScreenState {
   loading: boolean;
@@ -60,6 +60,15 @@ export interface ClockScreenState {
   autoDetectEnabled: boolean;
   /** Geofence-raised events waiting on this worker to confirm or dismiss. */
   suggestions: PendingSuggestionDto[];
+  /**
+   * The last position fix, kept only so the site plan has something to draw.
+   *
+   * This is a record of a fix already taken for another reason — a clock event,
+   * or the worker asking outright — never a reason to take one. Nothing here
+   * polls, and it is deliberately dropped on sign-out with the rest of state.
+   */
+  lastFix: Fix | null;
+  lastFixAt: string | null;
 }
 
 export interface PressOptions {
@@ -90,6 +99,8 @@ export function useClock(employeeId: string | null) {
     banner: null,
     autoDetectEnabled: false,
     suggestions: [],
+    lastFix: null,
+    lastFixAt: null,
   });
 
   const queueRef = useRef<EventQueue | null>(null);
@@ -253,6 +264,12 @@ export function useClock(employeeId: string | null) {
     async (jobId: string | null): Promise<{ fix: Fix; prompt: GeofencePrompt | null }> => {
       const fix = await captureFix();
       const job = state.jobs.find((j) => j.id === jobId) ?? null;
+
+      // Remembered for the site plan. The fix has already been taken by the
+      // time we get here; keeping it costs nothing and saves taking another.
+      if (fix.latitude != null && fix.longitude != null) {
+        setState((s) => ({ ...s, lastFix: fix, lastFixAt: new Date().toISOString() }));
+      }
 
       const verdict = evaluateGeofence({
         position:
