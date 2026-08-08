@@ -165,6 +165,24 @@ export async function sendOtp(phone: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+/**
+ * Sign in as a seeded worker by tapping their name. Demo builds only.
+ *
+ * There is no number to type and no code to wait for, because in demo mode
+ * there was never an SMS behind either — the code screen was theatre, and
+ * asking a scaffolder to type a phone number to look at a test build is a
+ * pointless obstacle. The token minted is the same `demo:+61...` the OTP path
+ * produced, so everything downstream is unchanged.
+ *
+ * Throws if called on a build with a real Supabase project configured: there,
+ * identity has to come from something the worker proves, not something they
+ * pick off a list.
+ */
+export async function signInAsDemoWorker(mobile: string): Promise<void> {
+  if (!IS_DEMO) throw new Error('Demo sign-in is not available on this build.');
+  await verifyOtp(mobile, '');
+}
+
 export async function verifyOtp(phone: string, token: string): Promise<void> {
   // Whoever signed in last must not leak into this session.
   await SecureStore.deleteItemAsync(PROFILE_KEY).catch(() => undefined);

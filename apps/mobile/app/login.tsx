@@ -1,8 +1,18 @@
 /**
- * Mobile number + one-time code login, drawn as a title block.
+ * Sign in.
  *
- * Two screens' worth of interaction, deliberately: number, then code. Nothing
- * to choose, nothing to remember, no password to reset on a Monday morning.
+ * Two paths, and which one shows depends on how the build is configured:
+ *
+ *   Demo    Tap your name. No number to type, no code to wait for. There was
+ *           never an SMS behind either of those in a demo build — the code
+ *           screen was theatre — and asking a scaffolder to key in a phone
+ *           number to open a test build is an obstacle that buys nothing.
+ *
+ *   Real    Mobile number, then a one-time code. Nothing to choose, nothing to
+ *           remember, no password to reset on a Monday morning. Kept intact
+ *           and untouched: on a build with a real Supabase project, identity
+ *           has to be something a worker proves, not something they pick off a
+ *           list.
  *
  * The layout is the title block off a drawing sheet — a ruled frame, a rule
  * under every field, and the sheet's own name in the corner. Nothing here is a
@@ -23,7 +33,14 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { sendOtp, verifyOtp, toE164, IS_DEMO, DEMO_NUMBERS } from '../src/auth';
+import {
+  sendOtp,
+  verifyOtp,
+  signInAsDemoWorker,
+  toE164,
+  IS_DEMO,
+  DEMO_NUMBERS,
+} from '../src/auth';
 import { colors, r, type as t, MIN_TAP } from '../src/theme';
 
 export default function LoginScreen() {
@@ -31,8 +48,25 @@ export default function LoginScreen() {
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const insets = useSafeAreaInsets();
+
+  const pickWorker = async (mobile: string): Promise<void> => {
+    if (busy) return;
+    setBusy(true);
+    setPending(mobile);
+    setError(null);
+    try {
+      await signInAsDemoWorker(mobile);
+      // The root layout notices the session and routes onward.
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not sign in. Try again.');
+    } finally {
+      setBusy(false);
+      setPending(null);
+    }
+  };
 
   const requestCode = async (): Promise<void> => {
     setBusy(true);
@@ -56,7 +90,6 @@ export default function LoginScreen() {
     setError(null);
     try {
       await verifyOtp(phone, code);
-      // The root layout notices the session and routes onward.
     } catch (e) {
       setError(
         e instanceof Error ? e.message : 'That code did not work. Check it and try again.',
@@ -88,17 +121,48 @@ export default function LoginScreen() {
           </View>
         </View>
 
-        {IS_DEMO && (
-          <View style={styles.hazard}>
-            <Text style={[styles.lbl, styles.hazardTitle]}>Demo mode</Text>
-            <Text style={styles.lead}>
-              No Supabase project is configured, so no code is texted. Pick a worker
-              below and enter any six digits.
-            </Text>
-          </View>
-        )}
+        {IS_DEMO ? (
+          <>
+            <Text style={styles.lbl}>Who are you</Text>
 
-        {phase === 'phone' ? (
+            <View style={styles.schedule}>
+              {DEMO_NUMBERS.map((worker, i) => (
+                <Pressable
+                  key={worker.mobile}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Sign in as ${worker.name}`}
+                  accessibilityState={{ disabled: busy }}
+                  disabled={busy}
+                  onPress={() => void pickWorker(worker.mobile)}
+                  style={({ pressed }) => [
+                    styles.scheduleRow,
+                    // The counting rule off the drawing: every 5th line reads
+                    // heavier, so a long list can be counted without landing
+                    // on the wrong one.
+                    (i + 1) % 5 === 0 && styles.scheduleRule5,
+                    pressed && styles.rowPressed,
+                    busy && pending !== worker.mobile && styles.rowDimmed,
+                  ]}
+                >
+                  <Text style={styles.rowName}>{worker.name}</Text>
+                  {pending === worker.mobile ? (
+                    <ActivityIndicator size="small" color={colors.ink} />
+                  ) : (
+                    <Text style={styles.rowMark}>›</Text>
+                  )}
+                </Pressable>
+              ))}
+            </View>
+
+            <View style={styles.hazard}>
+              <Text style={[styles.lbl, styles.hazardTitle]}>Demo build</Text>
+              <Text style={styles.lead}>
+                This build has no Supabase project behind it, so anyone can sign in as
+                anyone. It is for trying the app out, not for recording real hours.
+              </Text>
+            </View>
+          </>
+        ) : phase === 'phone' ? (
           <>
             <Field label="Your mobile number">
               <TextInput
@@ -125,33 +189,6 @@ export default function LoginScreen() {
               disabled={phone.replace(/\D/g, '').length < 9}
               onPress={() => void requestCode()}
             />
-
-            {IS_DEMO && (
-              <View style={styles.schedule}>
-                <View style={styles.scheduleHead}>
-                  <Text style={styles.lbl}>Seeded crew</Text>
-                  <Text style={styles.lbl}>Mobile</Text>
-                </View>
-                {DEMO_NUMBERS.map((worker, i) => (
-                  <Pressable
-                    key={worker.mobile}
-                    accessibilityRole="button"
-                    onPress={() => setPhone(worker.mobile)}
-                    style={({ pressed }) => [
-                      styles.scheduleRow,
-                      // The counting rule off the drawing: every 5th line reads
-                      // heavier, so a long list can be counted without landing
-                      // on the wrong one.
-                      (i + 1) % 5 === 0 && styles.scheduleRule5,
-                      pressed && styles.rowPressed,
-                    ]}
-                  >
-                    <Text style={styles.rowName}>{worker.name}</Text>
-                    <Text style={styles.rowMobile}>{worker.mobile}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            )}
           </>
         ) : (
           <>
@@ -198,10 +235,12 @@ export default function LoginScreen() {
           </View>
         )}
 
-        <Text style={styles.footnote}>
-          Your number has to match the one in the office system. If it does not, ask
-          your supervisor to check it against Odoo.
-        </Text>
+        {!IS_DEMO && (
+          <Text style={styles.footnote}>
+            Your number has to match the one in the office system. If it does not, ask
+            your supervisor to check it against Odoo.
+          </Text>
+        )}
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -298,17 +337,10 @@ const styles = StyleSheet.create({
   actionText: { ...t.act, color: colors.paper },
   actionTextOff: { color: colors.inkFaint },
 
-  /* ── the seeded crew, drawn as a schedule ────────────────────────────── */
+  /* ── the crew, drawn as a schedule ───────────────────────────────────── */
   schedule: { borderTopWidth: 1, borderTopColor: colors.ink },
-  scheduleHead: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: r.r8,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.line,
-  },
   scheduleRow: {
-    minHeight: MIN_TAP,
+    minHeight: MIN_TAP + r.r4,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -317,8 +349,9 @@ const styles = StyleSheet.create({
   },
   scheduleRule5: { borderBottomColor: colors.rule5 },
   rowPressed: { backgroundColor: colors.fillYellow },
-  rowName: { ...t.dat, fontSize: 15, color: colors.ink },
-  rowMobile: { ...t.dat, color: colors.ink700 },
+  rowDimmed: { opacity: 0.35 },
+  rowName: { ...t.dat, fontSize: 18, color: colors.ink },
+  rowMark: { ...t.dim, fontSize: 22, color: colors.inkFaint },
 
   link: { minHeight: MIN_TAP, alignItems: 'center', justifyContent: 'center' },
   linkText: { ...t.dat, color: colors.ink700, textDecorationLine: 'underline' },
