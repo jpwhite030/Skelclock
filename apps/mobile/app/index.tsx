@@ -64,6 +64,7 @@ export default function ClockScreen() {
     sync,
     checkGeofence,
     dismissBanner,
+    toggleAutoDetect,
     confirmSuggestion,
     dismissSuggestion,
   } = useClock(employeeId);
@@ -86,6 +87,13 @@ export default function ClockScreen() {
   const promptSuggestion = useCallback(
     (suggestion: PendingSuggestionDto) => {
       const action = suggestion.eventType === 'clock_in' ? 'clocking in' : 'clocking out';
+      // Used only in the multi-site prompt below, where the site is a button
+      // rather than named in the sentence, so the question needs the "at" the
+      // single-site version doesn't. Written directly rather than derived from
+      // `action` by string surgery — a naive .replace('ing', 'ing at') matches
+      // the "ing" inside "clocking" itself, not the one it's aimed at, and
+      // silently produces "clocking at in".
+      const actionAt = suggestion.eventType === 'clock_in' ? 'clocking in at' : 'clocking out at';
 
       // Two (or more) sites matched at once - the phone genuinely does not
       // know which one, so the worker picks rather than the app guessing.
@@ -97,7 +105,7 @@ export default function ClockScreen() {
           'Which site?',
           `You ${suggestion.eventType === 'clock_in' ? 'arrived near' : 'left near'} ${
             candidates.length
-          } job sites at once at ${formatTime(suggestion.deviceTime)}. Which one were you ${action.replace('ing', 'ing at')}?`,
+          } job sites at once at ${formatTime(suggestion.deviceTime)}. Which one were you ${actionAt}?`,
           [
             ...candidates.map((c) => ({
               text: c.siteName ?? `Job ${c.jobNumber}`,
@@ -233,6 +241,49 @@ export default function ClockScreen() {
     }
   }, [locating, checkGeofence, jobId]);
 
+  /**
+   * The consent notice lives here, not in useClock: toggleAutoDetect treats
+   * being called with enabled=true as the worker having already agreed to
+   * background tracking, so agreement has to happen before it is called, not
+   * inside it.
+   */
+  const onToggleAutoDetect = useCallback(
+    async (next: boolean) => {
+      if (!next) {
+        await toggleAutoDetect(false).catch(() => undefined);
+        return;
+      }
+      Alert.alert(
+        'Turn on auto-detect?',
+        'SkelClock will check your location in the background — even with the app closed — ' +
+          'to notice when you arrive at or leave an assigned job site. A clear, on-site reading ' +
+          'clocks you in or out automatically; anything less certain still asks you to confirm. ' +
+          'Turn it off any time and the tracking stops immediately.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Turn it on',
+            onPress: () => {
+              void (async () => {
+                try {
+                  await toggleAutoDetect(true);
+                } catch (err) {
+                  Alert.alert(
+                    "Couldn't turn that on",
+                    err instanceof Error
+                      ? err.message
+                      : 'Location permission is needed for auto-detect to work.',
+                  );
+                }
+              })();
+            },
+          },
+        ],
+      );
+    },
+    [toggleAutoDetect],
+  );
+
   if (state.loading) {
     return (
       <View style={[styles.screen, styles.centre]}>
@@ -241,7 +292,16 @@ export default function ClockScreen() {
     );
   }
 
-  const { home, clockState, availableActions, online, syncing } = state;
+  const {
+    home,
+    clockState,
+    availableActions,
+    online,
+    syncing,
+    autoDetectEnabled,
+    permissionHealth,
+    autoDetectTruncated,
+  } = state;
   const canClockIn = availableActions.includes('clock_in');
   const canClockOut = availableActions.includes('clock_out');
   const canStartBreak = availableActions.includes('break_start');
@@ -403,6 +463,7 @@ export default function ClockScreen() {
             label="Clock on"
             ground={colors.green}
             disabled={busy}
+            busy={busy}
             onPress={() => void runClockEvent('clock_in')}
           />
         )}
@@ -412,6 +473,7 @@ export default function ClockScreen() {
             label="Knock off"
             ground={colors.ink}
             disabled={busy}
+            busy={busy}
             onPress={() =>
               Alert.alert('Knock off?', 'This ends your shift for today.', [
                 { text: 'Not yet', style: 'cancel' },
@@ -440,6 +502,49 @@ export default function ClockScreen() {
           </View>
         )}
 
+        <Section label="Auto-detect arrival">
+          <View style={styles.switchRow}>
+            <Text style={[styles.lead, styles.switchCopy]}>
+              Clock you in or out automatically when your phone notices you have arrived at or
+              left a job site — even if SkelClock is not open. Anything the phone is not sure
+              about still asks you to confirm first.
+            </Text>
+            <Pressable
+              accessibilityRole="switch"
+              accessibilityLabel="Auto-detect arrival"
+              accessibilityState={{ checked: autoDetectEnabled }}
+              onPress={() => void onToggleAutoDetect(!autoDetectEnabled)}
+              style={styles.switchBox}
+            >
+              <View style={[styles.switchMark, autoDetectEnabled && styles.switchMarkOn]} />
+            </Pressable>
+          </View>
+
+          {permissionHealth === 'needs_attention' && (
+            <Pressable onPress={() => void onToggleAutoDetect(true)}>
+              <Text style={[styles.dat, { color: colors.magenta }]}>
+                Auto-detect stopped working — location permission was turned off somewhere else
+                on this phone. Tap to fix it.
+              </Text>
+            </Pressable>
+          )}
+
+          {autoDetectEnabled && autoDetectTruncated && (
+            <Text style={styles.dat}>
+              You&apos;re assigned to more sites than one phone can watch at once — only some
+              are covered. Manual clock-in still works everywhere.
+            </Text>
+          )}
+
+          <Text style={styles.dat}>
+            Your location is recorded when you clock on and clock off. With auto-detect on,
+            SkelClock also checks your location in the background near a job site — a
+            confident, on-site reading clocks you in or out by itself, and anything less
+            certain asks you to confirm instead. Turn it off any time and the tracking stops
+            immediately.
+          </Text>
+        </Section>
+
         {home?.assignedJob && (
           <Pressable
             accessibilityRole="button"
@@ -462,7 +567,15 @@ export default function ClockScreen() {
           </Pressable>
         )}
 
-        <Pressable style={styles.signOut} onPress={() => void signOut()}>
+        <Pressable
+          style={styles.signOut}
+          onPress={() =>
+            Alert.alert('Sign out?', "You'll need to sign in again to get back to your clock.", [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Sign out', style: 'destructive', onPress: () => void signOut() },
+            ])
+          }
+        >
           <Text style={styles.signOutText}>Sign out</Text>
         </Pressable>
       </ScrollView>
@@ -508,23 +621,38 @@ function Datum({
   );
 }
 
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <View style={styles.section}>
+      <Text style={[styles.lbl, styles.sectionLabel]}>{label}</Text>
+      {children}
+    </View>
+  );
+}
+
 /** The one very large button. Three rosettes tall. */
 function ClockBand({
   label,
   ground,
   disabled,
+  busy,
   onPress,
 }: {
   label: string;
   ground: string;
   disabled: boolean;
+  /** True while this specific press is waiting on a GPS fix. A gloved thumb
+   * on a scaffold deck reads a silently-dimmed button as a dead one — the
+   * band needs to say it is working, the same way "Check my position"
+   * already does, not just stop responding until the fix arrives. */
+  busy?: boolean;
   onPress: () => void;
 }) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
-      accessibilityState={{ disabled }}
+      accessibilityState={{ disabled, busy }}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
@@ -532,7 +660,11 @@ function ClockBand({
         { backgroundColor: ground, opacity: disabled ? 0.45 : pressed ? 0.86 : 1 },
       ]}
     >
-      <Text style={styles.bandText}>{label}</Text>
+      {busy ? (
+        <ActivityIndicator size="small" color={colors.paper} />
+      ) : (
+        <Text style={styles.bandText}>{label}</Text>
+      )}
     </Pressable>
   );
 }
@@ -685,6 +817,24 @@ const styles = StyleSheet.create({
   },
   ghostPressed: { backgroundColor: colors.paper200 },
   ghostText: { ...t.act, fontSize: 15, color: colors.ink },
+
+  /* ── sections ────────────────────────────────────────────────────────── */
+  section: { gap: r.r4, paddingTop: r.r4, borderTopWidth: 1, borderTopColor: colors.line },
+  sectionLabel: { color: colors.ink700 },
+
+  /* ── the switch, drawn square ────────────────────────────────────────── */
+  switchRow: { flexDirection: 'row', alignItems: 'center', gap: r.r4 },
+  switchCopy: { flex: 1 },
+  switchBox: {
+    width: MIN_TAP,
+    height: MIN_TAP,
+    borderWidth: 1,
+    borderColor: colors.ink,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  switchMark: { width: r.r2, height: r.r2, backgroundColor: 'transparent' },
+  switchMarkOn: { backgroundColor: colors.green },
 
   /* ── the crew link — a supervisor's second screen ───────────────────── */
   crewLink: {
