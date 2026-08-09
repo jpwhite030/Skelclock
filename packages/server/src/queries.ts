@@ -24,12 +24,14 @@ const iso = (v: unknown): string | null =>
 
 // --- worker home ------------------------------------------------------------
 
-export type WorkerHome = WorkerHomeDto;
+/** Everything the contract carries except `role`, which is caller data the
+ * route injects from the app_user row — this query has no caller. */
+export type WorkerHome = Omit<WorkerHomeDto, 'role'>;
 
 export async function getWorkerHome(
   db: Db,
   args: { companyId: string; employeeId: string; workDate: string; now?: Date },
-): Promise<WorkerHomeDto> {
+): Promise<WorkerHome> {
   const now = args.now ?? new Date();
 
   const employee = await one<{ id: string; full_name: string }>(
@@ -117,7 +119,7 @@ export async function getWorkerHome(
     [args.employeeId],
   );
 
-  return workerHomeSchema.parse({
+  return workerHomeSchema.omit({ role: true }).parse({
     employeeId: employee.id,
     employeeName: employee.full_name,
     workDate: args.workDate,
@@ -156,6 +158,7 @@ export interface WorkingNowRow {
   employeeId: string;
   employeeName: string;
   crewName: string | null;
+  jobId: string | null;
   jobNumber: string | null;
   siteName: string | null;
   activityName: string | null;
@@ -166,6 +169,11 @@ export interface WorkingNowRow {
   locationStatus: 'inside' | 'outside' | 'unknown';
   distanceM: number | null;
   syncStatus: string;
+  /** The most recent clock event this shift that carried a GPS fix. Not live
+   * tracking — location is only ever recorded at clock events. */
+  lastLatitude: number | null;
+  lastLongitude: number | null;
+  lastFixAt: string | null;
 }
 
 export async function getWorkingNow(
@@ -221,6 +229,9 @@ export async function getWorkingNow(
     const { segments, totals } = buildSegments(shift.events, { now, ...payrollOptions });
     const current = segments[segments.length - 1];
     const clockIn = shift.events.find((e) => e.eventType === 'clock_in');
+    const lastFix = [...shift.events]
+      .reverse()
+      .find((e) => e.latitude != null && e.longitude != null);
 
     const job = current?.jobId
       ? await one<{ job_number: string; site_name: string | null }>(
@@ -250,6 +261,7 @@ export async function getWorkingNow(
       employeeId: r.employee_id,
       employeeName: r.full_name,
       crewName: r.crew_name,
+      jobId: current?.jobId ?? null,
       jobNumber: job?.job_number ?? null,
       siteName: job?.site_name ?? null,
       activityName: activity?.name ?? null,
@@ -265,6 +277,9 @@ export async function getWorkingNow(
             : 'unknown',
       distanceM: clockIn?.distanceFromSiteM ?? null,
       syncStatus: sync?.status ?? 'not_queued',
+      lastLatitude: lastFix?.latitude ?? null,
+      lastLongitude: lastFix?.longitude ?? null,
+      lastFixAt: lastFix?.deviceTime ?? null,
     });
   }
 

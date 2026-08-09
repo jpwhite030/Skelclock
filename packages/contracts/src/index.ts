@@ -19,3 +19,4 @@ export * from './suggestions.js';
 export * from './timesheets.js';
 export * from './device.js';
 export * from './consent.js';
+export * from './crew.js';

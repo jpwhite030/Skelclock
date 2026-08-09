@@ -11,6 +11,10 @@ export const deviceCheckinRequestSchema = z.object({
   appVersion: z.string().nullable().optional(),
   /** Mirrors Expo's Location.PermissionStatus for the background permission. */
   locationPermission: z.enum(['granted', 'denied', 'undetermined']).nullable().optional(),
+  /** ExponentPushToken[...] — how the notification sweep reaches this phone.
+   * Absent when the user declined notification permission; nudges are then
+   * silently skipped for them, never queued. */
+  pushToken: z.string().nullable().optional(),
 });
 
 export const deviceCheckinResponseSchema = z.object({ status: z.literal('ok') });

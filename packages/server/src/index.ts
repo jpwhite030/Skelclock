@@ -12,3 +12,6 @@ export * from './devices.js';
 export * from './consent.js';
 export * from './settings.js';
 export * from './authz.js';
+export * from './exceptions.js';
+export * from './notifications.js';
+export * from './export.js';

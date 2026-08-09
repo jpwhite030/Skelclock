@@ -24,6 +24,7 @@ import {
   DbError,
   enqueueTimesheetPush,
   excludedSiteIds,
+  exportTimesheetsCsv,
   getAuditTrail,
   getCompanySettings,
   getWorkerHome,
@@ -42,13 +43,19 @@ import {
   removeSiteExclusion,
   reopenTimesheet,
   retrySyncJob,
+  runNotificationSweep,
   runSyncWorker,
   SuggestionError,
   supervises,
   updateCompanySettings,
+  updateExceptionStatus,
   voidEvent,
   WorkflowError,
   type Db,
+  type EmailMessage,
+  type EmailSender,
+  type PushMessage,
+  type PushSender,
 } from '@skelclock/server';
 
 import { createLocalDb, seedFixture, type Fixture } from './local-db.js';
@@ -2293,6 +2300,213 @@ test('travel allocation, set to first_site, reaches the worker home screen throu
 
     const updated = await getCompanySettings(db, fx.companyId);
     assert.equal(updated.travelAllocation, 'first_site');
+  } finally {
+    await close();
+  }
+});
+
+// --- acting on exceptions, exporting payroll, outbound notifications ---------
+
+test('an exception can be acknowledged and resolved; resolving demands a note', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    // A 4km-off-site clock-in with no reason raises outside_geofence.
+    await ingestEvents(db, {
+      companyId: fx.companyId,
+      events: [
+        clockEvent(fx, {
+          eventType: 'clock_in',
+          deviceTime: '2026-08-03T20:00:00Z',
+          latitude: OFF_SITE.latitude,
+          longitude: OFF_SITE.longitude,
+        }),
+      ],
+      now: NOW,
+    });
+
+    const open = await listExceptions(db, { companyId: fx.companyId, status: 'open' });
+    const exception = open.find((r) => r.type === 'outside_geofence');
+    assert.ok(exception, 'expected an outside_geofence exception');
+
+    await updateExceptionStatus(db, {
+      companyId: fx.companyId,
+      exceptionId: exception.id,
+      action: 'acknowledge',
+      actorUserId: fx.adminUserId,
+    });
+    let row = await one<{ status: string }>(
+      db,
+      'select status from attendance_exception where id = $1',
+      [exception.id],
+    );
+    assert.equal(row!.status, 'acknowledged');
+
+    // Resolving with no note is refused — the note is the audit trail.
+    await assert.rejects(
+      updateExceptionStatus(db, {
+        companyId: fx.companyId,
+        exceptionId: exception.id,
+        action: 'resolve',
+        actorUserId: fx.adminUserId,
+      }),
+      (e: Error) => e.name === 'ExceptionError',
+    );
+
+    await updateExceptionStatus(db, {
+      companyId: fx.companyId,
+      exceptionId: exception.id,
+      action: 'resolve',
+      actorUserId: fx.adminUserId,
+      note: 'Spoke to Dean — new job, site pin was still on the old address.',
+    });
+    const resolved = await one<{ status: string; resolved_by: string; resolution_note: string }>(
+      db,
+      'select status, resolved_by, resolution_note from attendance_exception where id = $1',
+      [exception.id],
+    );
+    assert.equal(resolved!.status, 'resolved');
+    assert.equal(resolved!.resolved_by, fx.adminUserId);
+    assert.match(resolved!.resolution_note, /site pin/);
+
+    await updateExceptionStatus(db, {
+      companyId: fx.companyId,
+      exceptionId: exception.id,
+      action: 'reopen',
+      actorUserId: fx.adminUserId,
+    });
+    row = await one<{ status: string }>(
+      db,
+      'select status from attendance_exception where id = $1',
+      [exception.id],
+    );
+    assert.equal(row!.status, 'open');
+  } finally {
+    await close();
+  }
+});
+
+test('the CSV export carries the same day the ledger shows, in decimal hours', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    // The PoC day: 8h paid door to door around a 30m unpaid break.
+    for (const [eventType, deviceTime] of [
+      ['clock_in', '2026-08-03T20:00:00Z'],
+      ['break_start', '2026-08-03T23:00:00Z'],
+      ['break_end', '2026-08-03T23:30:00Z'],
+      ['clock_out', '2026-08-04T04:30:00Z'],
+    ] as const) {
+      await ingestEvents(db, {
+        companyId: fx.companyId,
+        events: [clockEvent(fx, { eventType, deviceTime })],
+        now: NOW,
+      });
+    }
+
+    const out = await exportTimesheetsCsv(db, {
+      companyId: fx.companyId,
+      from: '2026-08-01',
+      to: '2026-08-10',
+    });
+
+    assert.equal(out.rowCount, 1);
+    assert.match(out.csv, /^Date,Employee number,Employee,/);
+    const dataLine = out.csv.split('\r\n')[1]!;
+    assert.match(dataLine, /SS-114/);
+    assert.match(dataLine, /Dean Whitmore/);
+    assert.match(dataLine, /8\.00/); // paid hours, decimal
+    assert.match(dataLine, /0\.50/); // break hours
+    assert.match(out.filename, /2026-08-01-to-2026-08-10/);
+  } finally {
+    await close();
+  }
+});
+
+test('the sweep nudges a forgotten clock-out once, and only once', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    // On the tools for 13 hours with no operating hours configured — past the
+    // 12h fallback line.
+    await ingestEvents(db, {
+      companyId: fx.companyId,
+      events: [clockEvent(fx, { eventType: 'clock_in', deviceTime: '2026-08-03T20:00:00Z' })],
+      now: NOW,
+    });
+
+    await db.query(
+      `insert into device (company_id, app_user_id, device_id, push_token, last_seen_at)
+       values ($1, $2, 'test-device', 'ExponentPushToken[test]', now())`,
+      [fx.companyId, fx.workerUserId],
+    );
+
+    const sent: PushMessage[] = [];
+    const push: PushSender = async (messages) => {
+      sent.push(...messages);
+    };
+    const noEmail: EmailSender = { channel: 'log', send: async () => undefined };
+
+    const first = await runNotificationSweep(db, {
+      now: new Date('2026-08-04T09:00:00Z'), // Tue evening AEST — weekly part stays quiet
+      push,
+      email: noEmail,
+    });
+    assert.equal(first.pushSent, 1);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0]!.to, 'ExponentPushToken[test]');
+    assert.match(sent[0]!.title, /Still clocked on/);
+
+    const second = await runNotificationSweep(db, {
+      now: new Date('2026-08-04T09:05:00Z'),
+      push,
+      email: noEmail,
+    });
+    assert.equal(second.pushSent, 0, 'the dedupe row must stop a re-send');
+    assert.equal(second.failed, 0);
+  } finally {
+    await close();
+  }
+});
+
+test('the weekly summary emails last week once per employee, Monday morning local', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    // A locked day inside the prior ISO week (Mon 2026-07-27 .. Sun 2026-08-02).
+    await db.query(
+      `insert into timesheet (company_id, employee_id, work_date, status,
+                              total_shift_minutes, total_break_minutes, total_paid_minutes)
+       values ($1, $2, '2026-07-29', 'locked', 510, 30, 480)`,
+      [fx.companyId, fx.employeeId],
+    );
+
+    const emails: EmailMessage[] = [];
+    const email: EmailSender = {
+      channel: 'email',
+      send: async (m) => {
+        emails.push(m);
+      },
+    };
+    const noPush: PushSender = async () => undefined;
+
+    // 22:30 UTC Sunday = 08:30 Monday in Sydney.
+    const mondayMorning = new Date('2026-08-02T22:30:00Z');
+
+    const first = await runNotificationSweep(db, { now: mondayMorning, push: noPush, email });
+    assert.equal(first.emailsSent, 1, 'one employee has hours and an email address');
+    assert.equal(emails.length, 1);
+    assert.equal(emails[0]!.to, 'dean.whitmore@example.com');
+    assert.match(emails[0]!.subject, /2026-07-27/);
+    assert.match(emails[0]!.subject, /8h 00m/);
+    assert.match(emails[0]!.text, /2026-07-29/);
+
+    const second = await runNotificationSweep(db, { now: mondayMorning, push: noPush, email });
+    assert.equal(second.emailsSent, 0, 'the ISO-week dedupe must hold');
+
+    // Tuesday: the weekly part must not run at all.
+    const tuesday = await runNotificationSweep(db, {
+      now: new Date('2026-08-03T22:30:00Z'),
+      push: noPush,
+      email,
+    });
+    assert.equal(tuesday.emailsSent, 0);
   } finally {
     await close();
   }

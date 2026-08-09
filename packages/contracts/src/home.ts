@@ -30,6 +30,10 @@ export const workerHomeSchema = z.object({
    * didn't apply. Shown so a worker's paid figure never shrinks unexplained. */
   autoLunchMinutes: z.number(),
   pendingSyncCount: z.number(),
+  /** The caller's role, injected by the route from the app_user row — it is
+   * never in getWorkerHome, because the server query has no caller. Decides
+   * whether the phone offers the crew screen; the crew routes enforce it. */
+  role: z.enum(['worker', 'supervisor', 'admin']),
 });
 
 export type WorkerHomeDto = z.infer<typeof workerHomeSchema>;

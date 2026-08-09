@@ -17,20 +17,25 @@ export interface DeviceCheckinInput {
   platform?: string | null;
   appVersion?: string | null;
   locationPermission?: string | null;
+  pushToken?: string | null;
 }
 
 export async function checkinDevice(db: Db, input: DeviceCheckinInput): Promise<void> {
   await db.query(
     `insert into device (
        company_id, app_user_id, device_id, platform, app_version,
-       location_permission, last_seen_at
+       location_permission, push_token, last_seen_at
      )
-     select u.company_id, $1, $2, $3, $4, $5, now()
+     select u.company_id, $1, $2, $3, $4, $5, $6, now()
        from app_user u where u.id = $1
      on conflict (app_user_id, device_id)
      do update set platform             = excluded.platform,
                    app_version           = excluded.app_version,
                    location_permission   = excluded.location_permission,
+                   -- A check-in with no token must not erase a token a
+                   -- previous check-in registered — permission prompts race
+                   -- app startup, and the sweep needs the last good one.
+                   push_token            = coalesce(excluded.push_token, device.push_token),
                    last_seen_at          = now()`,
     [
       input.appUserId,
@@ -38,6 +43,7 @@ export async function checkinDevice(db: Db, input: DeviceCheckinInput): Promise<
       input.platform ?? null,
       input.appVersion ?? null,
       input.locationPermission ?? null,
+      input.pushToken ?? null,
     ],
   );
 }
