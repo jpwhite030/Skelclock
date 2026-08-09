@@ -123,35 +123,44 @@ export default function LoginScreen() {
 
         {IS_DEMO ? (
           <>
-            <Text style={styles.lbl}>Who are you</Text>
+            {/* A crew schedule, with the column heads a schedule has. */}
+            <View style={styles.scheduleHead}>
+              <Text style={styles.lbl}>Employee</Text>
+              <Text style={styles.lbl}>Crew</Text>
+            </View>
 
             <View style={styles.schedule}>
-              {DEMO_NUMBERS.map((worker, i) => (
-                <Pressable
-                  key={worker.mobile}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Sign in as ${worker.name}`}
-                  accessibilityState={{ disabled: busy }}
-                  disabled={busy}
-                  onPress={() => void pickWorker(worker.mobile)}
-                  style={({ pressed }) => [
-                    styles.scheduleRow,
-                    // The counting rule off the drawing: every 5th line reads
-                    // heavier, so a long list can be counted without landing
-                    // on the wrong one.
-                    (i + 1) % 5 === 0 && styles.scheduleRule5,
-                    pressed && styles.rowPressed,
-                    busy && pending !== worker.mobile && styles.rowDimmed,
-                  ]}
-                >
-                  <Text style={styles.rowName}>{worker.name}</Text>
-                  {pending === worker.mobile ? (
-                    <ActivityIndicator size="small" color={colors.ink} />
-                  ) : (
-                    <Text style={styles.rowMark}>›</Text>
-                  )}
-                </Pressable>
-              ))}
+              {DEMO_NUMBERS.map((worker) => {
+                const signingIn = pending === worker.mobile;
+                return (
+                  <Pressable
+                    key={worker.mobile}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Sign in as ${worker.name}, ${worker.number}`}
+                    accessibilityState={{ disabled: busy }}
+                    disabled={busy}
+                    onPress={() => void pickWorker(worker.mobile)}
+                    style={({ pressed }) => [
+                      styles.scheduleRow,
+                      pressed && styles.rowPressed,
+                      signingIn && styles.rowActive,
+                      busy && !signingIn && styles.rowDimmed,
+                    ]}
+                  >
+                    <View style={styles.rowMain}>
+                      <Text style={styles.rowNumber}>{worker.number}</Text>
+                      <Text style={styles.rowName} numberOfLines={1}>
+                        {worker.name}
+                      </Text>
+                    </View>
+                    {signingIn ? (
+                      <ActivityIndicator size="small" color={colors.green} />
+                    ) : (
+                      <Text style={styles.rowCrew}>{worker.crew}</Text>
+                    )}
+                  </Pressable>
+                );
+              })}
             </View>
 
             <View style={styles.hazard}>
@@ -338,20 +347,33 @@ const styles = StyleSheet.create({
   actionTextOff: { color: colors.inkFaint },
 
   /* ── the crew, drawn as a schedule ───────────────────────────────────── */
-  schedule: { borderTopWidth: 1, borderTopColor: colors.ink },
+  scheduleHead: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingBottom: r.r8,
+  },
+  schedule: { borderTopWidth: 2, borderTopColor: colors.ink },
   scheduleRow: {
-    minHeight: MIN_TAP + r.r4,
+    // 1.5 rosettes: the gloved-thumb floor, same as every other tap target.
+    minHeight: MIN_TAP,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: r.r4,
+    paddingHorizontal: r.r8,
     borderBottomWidth: 1,
     borderBottomColor: colors.line,
   },
-  scheduleRule5: { borderBottomColor: colors.rule5 },
   rowPressed: { backgroundColor: colors.fillYellow },
-  rowDimmed: { opacity: 0.35 },
-  rowName: { ...t.dat, fontSize: 18, color: colors.ink },
-  rowMark: { ...t.dim, fontSize: 22, color: colors.inkFaint },
+  // Green while signing in: boards down, this one is going through.
+  rowActive: { backgroundColor: colors.fillGreen },
+  rowDimmed: { opacity: 0.3 },
+  rowMain: { flexDirection: 'row', alignItems: 'baseline', gap: r.r4, flexShrink: 1 },
+  // The employee number leads, monospaced and fixed-width, so the names line
+  // up in a column the way a printed crew list does.
+  rowNumber: { ...t.dat, color: colors.inkFaint, width: 68 },
+  rowName: { ...t.dat, fontSize: 17, color: colors.ink, flexShrink: 1 },
+  rowCrew: { ...t.dat, color: colors.ink700 },
 
   link: { minHeight: MIN_TAP, alignItems: 'center', justifyContent: 'center' },
   linkText: { ...t.dat, color: colors.ink700, textDecorationLine: 'underline' },

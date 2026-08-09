@@ -32,13 +32,19 @@ export { toE164 };
 /** True when this build has no Supabase project and falls back to demo login. */
 export const IS_DEMO = !isSupabaseConfigured;
 
-/** The mobile numbers the demo seed creates, shown as a hint on the login screen. */
+/**
+ * The crew the demo seed creates, listed on the login screen of a demo build.
+ *
+ * Employee numbers included because they are what the office and the workers
+ * both actually use — the same identifier the seed writes to employee_number
+ * and that Odoo knows them by. A crew list without them is a list of strangers.
+ */
 export const DEMO_NUMBERS = [
-  { name: 'Dean Whitmore', mobile: '+61412555208' },
-  { name: 'Tobias Renner', mobile: '+61412555209' },
-  { name: 'Ana Petrovic', mobile: '+61412555210' },
-  { name: 'Mikhail Dvorak', mobile: '+61412555211' },
-  { name: 'Priya Raghavan', mobile: '+61412555212' },
+  { name: 'Dean Whitmore', number: 'SS-114', crew: 'Crew A', mobile: '+61412555208' },
+  { name: 'Tobias Renner', number: 'SS-118', crew: 'Crew A', mobile: '+61412555209' },
+  { name: 'Ana Petrovic', number: 'SS-121', crew: 'Crew A', mobile: '+61412555210' },
+  { name: 'Mikhail Dvorak', number: 'SS-126', crew: 'Crew B', mobile: '+61412555211' },
+  { name: 'Priya Raghavan', number: 'SS-130', crew: 'Crew B', mobile: '+61412555212' },
 ];
 
 export interface AppSession {
