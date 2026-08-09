@@ -4,10 +4,11 @@
  * The dashboard pages are server components and cannot use the bearer-token
  * path the mobile API routes use, so the Supabase session is read from cookies.
  *
- * MVP note: with no session (a fresh local install, before Supabase auth is
- * wired up) this falls back to the single company in the database so the
- * dashboard is usable during development. That fallback is refused when
- * NODE_ENV is production — it must never become the way the office signs in.
+ * Development fallback: only when Supabase auth is not configured at all (no
+ * SUPABASE_URL/anon key in the environment) does this fall back to the single
+ * company in the database, so a fresh clone's dashboard works. The moment
+ * Supabase is configured, a browser with no session gets nothing — and the
+ * fallback is refused outright when NODE_ENV is production.
  */
 
 import { cookies } from 'next/headers';
@@ -46,37 +47,43 @@ export async function getDashboardSession(): Promise<DashboardSession | null> {
     });
 
     const { data } = await supabase.auth.getUser();
-    if (data.user) {
-      const row = await one<{
-        id: string;
-        company_id: string;
-        employee_id: string | null;
-        role: DashboardSession['role'];
-        full_name: string | null;
-        company_name: string;
-      }>(
-        db,
-        `select u.id, u.company_id, u.employee_id, u.role, e.full_name, c.name as company_name
-           from app_user u
-           join company c on c.id = u.company_id
-           left join employee e on e.id = u.employee_id
-          where u.auth_user_id = $1 and u.active`,
-        [data.user.id],
-      );
-
-      if (row) {
-        return {
-          companyId: row.company_id,
-          companyName: row.company_name,
-          appUserId: row.id,
-          employeeId: row.employee_id,
-          role: row.role,
-          fullName: row.full_name,
-          unauthenticated: false,
-        };
-      }
+    if (!data.user) {
+      // Supabase is configured but this browser holds no session: that is a
+      // visitor who has not signed in, not a bare development install. The
+      // demo fallback below must not answer for them — it would present the
+      // whole company, as admin, to anyone who found the URL.
       return null;
     }
+
+    const row = await one<{
+      id: string;
+      company_id: string;
+      employee_id: string | null;
+      role: DashboardSession['role'];
+      full_name: string | null;
+      company_name: string;
+    }>(
+      db,
+      `select u.id, u.company_id, u.employee_id, u.role, e.full_name, c.name as company_name
+         from app_user u
+         join company c on c.id = u.company_id
+         left join employee e on e.id = u.employee_id
+        where u.auth_user_id = $1 and u.active`,
+      [data.user.id],
+    );
+
+    if (row) {
+      return {
+        companyId: row.company_id,
+        companyName: row.company_name,
+        appUserId: row.id,
+        employeeId: row.employee_id,
+        role: row.role,
+        fullName: row.full_name,
+        unauthenticated: false,
+      };
+    }
+    return null;
   }
 
   if (process.env.NODE_ENV === 'production') return null;
