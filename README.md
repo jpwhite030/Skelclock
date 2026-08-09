@@ -18,7 +18,7 @@ No credentials, no Docker, no Odoo account needed:
 ```bash
 npm install
 npm run poc      # the 7-step proof of concept, end to end
-npm test         # 159 tests
+npm test         # 163 tests
 ```
 
 `npm run poc` runs the First Engineering Deliverable from the brief against an
@@ -91,7 +91,7 @@ apps/mobile        Expo app. Clock screen, offline SQLite queue, GPS capture,
                    background geofence clocking.
 apps/web           Next.js. The mobile API plus the six office screens.
 
-supabase/migrations  The schema. 0001-0006 are portable Postgres; 1001 is
+supabase/migrations  The schema. 0001-0007 are portable Postgres; 1001 is
                      Supabase-only (auth linkage and row-level security).
 
 scripts/           poc.ts, odoo-probe.ts, local-db.ts, integration.test.ts,
@@ -134,9 +134,11 @@ distinguishable in Odoo's own audit trail.
 
 ## Deploying
 
-1. **Database.** Create a Supabase project in `ap-southeast-2` (Sydney). Apply
-   `supabase/migrations/*.sql` in filename order — all seven, including `1001`,
-   which is the one that turns on row-level security.
+1. **Database.** Create a Supabase project in `ap-southeast-2` (Sydney). Set
+   `DATABASE_URL` to the **session pooler** string and run `npm run db:migrate`
+   — it applies every file in order, including `1001`, which is the one that
+   turns on row-level security, and records progress so re-runs only apply
+   what's new.
 2. **Web.** Deploy `apps/web` with `DATABASE_URL`, `SUPABASE_URL`,
    `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` and the Odoo variables set.
    Point a cron at `GET /api/sync` every few minutes with the `CRON_SECRET`
@@ -221,11 +223,10 @@ Phase 1 of the brief is complete and tested:
 - Admin dashboard: Working Now, Timesheets, Exceptions, Sites, Odoo Sync, Settings
 - Full audit trail on every attendance change
 
-Phase 2 exists in the service layer and is covered by tests — breaks, job and
-activity switching, crew clocking, approvals, exceptions — and supervisors
-correct, void and add events from the web timesheet detail screen. **The
-supervisor's mobile view is not yet built**; crew clocking works through the
-service layer but has no phone screen.
+Phase 2 is complete: breaks, job and activity switching, approvals and
+exceptions, supervisors correcting/voiding/adding events from the web
+timesheet detail screen, and a supervisor crew screen on the phone — one tap
+clocks the whole crew on or off, with per-member outcomes.
 
 Phase 3 (automatic geofence clocking) is built: the phone watches site
 geofences in the background (with recorded worker consent), a walk-on raises
@@ -236,15 +237,19 @@ site picker. Nothing auto-created silently becomes payroll otherwise.
 
 On top of the brief: configurable payroll policy (auto lunch deduction,
 travel allocation, company operating hours with per-site overrides, enforced
-at clock-in) and per-employee site lockouts. See
-[DEVELOPERS.md](DEVELOPERS.md) for how each works.
+at clock-in), per-employee site lockouts, address-search site creation,
+office sign-in by email link, exception acknowledge/resolve, a CSV payroll
+export for running pay without an ERP connected, a last-positions site plan
+on Working Now, push nudges (forgotten clock-out, unconfirmed auto-clock)
+and a weekly emailed hours summary. See [DEVELOPERS.md](DEVELOPERS.md) for
+how each works.
 
 ---
 
 ## Testing
 
 ```bash
-npm test          # everything: 159 tests
+npm test          # everything: 163 tests
 npm run test:unit # domain logic only, no database, ~1s
 ```
 

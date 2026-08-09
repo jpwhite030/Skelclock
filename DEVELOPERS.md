@@ -110,6 +110,7 @@ everything below 1000; Supabase gets all of them.
 | `0004_odoo_links.sql` | Odoo linkage columns |
 | `0005_geofence_v2.sql` | `attendance_event.candidate_job_ids uuid[]`, `geofence_consent_event` |
 | `0006_supervisor_settings.sql` | Payroll settings columns on `company` and `site`, `timesheet.total_auto_lunch_minutes`, `employee_site_exclusion` |
+| `0007_notifications.sql` | `notification_log` — the exactly-once dedupe behind push nudges and weekly summary emails |
 | `1001_supabase_rls.sql` | Supabase-only: `auth.users` linkage + row-level security policies |
 
 ### Tables, grouped
@@ -479,6 +480,29 @@ an add-event form.
 - **Trigger**: `GET /api/sync` with the `CRON_SECRET` bearer token; point a
   cron at it every few minutes.
 
+### Outbound notifications (same cron)
+
+The sync cron also runs `runNotificationSweep`
+(`packages/server/src/notifications.ts`), which sends three messages:
+
+- **`missing_clock_out`** (push) — still clocked on past site close + 30 min
+  grace (site hours, else company hours, else a 12 h fallback). Once per
+  employee per local day.
+- **`stale_suggestion`** (push) — an auto-geofence clock unconfirmed for
+  over 24 h. Once per suggested event, ever.
+- **`weekly_summary`** (email) — last ISO week's per-day and total paid
+  hours, sent Monday morning local time to `employee.email`. Once per
+  employee per week. Runs from our own attendance data — no ERP required.
+
+Exactly-once is the `notification_log` unique constraint, not careful code:
+each message claims a row before sending; a failed send releases the claim
+so the next sweep retries. Push goes to Expo's public push API using the
+`ExponentPushToken` each device registers at check-in (`device.push_token`;
+no token → that worker is silently skipped). Email is pluggable: the default
+`log` sender composes but never sends; `EMAIL_MODE=live` + a Resend key
+turns it on. Senders are injected, so the integration tests run the whole
+sweep against fakes.
+
 ---
 
 ## 11. The web dashboard
@@ -552,7 +576,10 @@ against the named contract in `packages/contracts/src/`.
 | `/api/timesheets/[id]` | POST | `{action:'confirm'}` — worker confirms their day | `timesheetActionResponseSchema` |
 | `/api/device` | POST | Device check-in (permission health, push token) | `deviceCheckinResponseSchema` |
 | `/api/geofence-consent` | POST | Append a consent grant/revoke | `geofenceConsentResponseSchema` |
-| `/api/sync` | GET | Run the Odoo sync worker — `CRON_SECRET` bearer, not a user token | — |
+| `/api/crew` | GET | Supervisor/admin: their crews with live member state | `crewsResponseSchema` |
+| `/api/crew/clock` | POST | One tap, one event per crew member (per-crew authz) | `crewClockResponseSchema` |
+| `/api/sync` | GET | Run the Odoo sync worker **and the notification sweep** — `CRON_SECRET` bearer, not a user token | — |
+| `/timesheets/export` | GET | The filtered ledger as CSV (dashboard cookie session, not a bearer token) | — |
 
 ---
 
@@ -560,7 +587,7 @@ against the named contract in `packages/contracts/src/`.
 
 ```bash
 npm install
-npm test                          # full suite (currently 159 tests)
+npm test                          # full suite (currently 163 tests)
 npm run poc                       # the 7-step proof of concept, end to end
 cd apps/web && npx next dev -p 3100   # dashboard at http://localhost:3100
 npm run shots                     # screenshot every screen into .shots/current
@@ -595,6 +622,7 @@ Settings and Sites screens to see the behaviour.
 | `DEFAULT_GEOFENCE_RADIUS_M` | ingest, jobs API | Default 70 |
 | `CRON_SECRET` | `/api/sync` | Bearer token for the cron |
 | `EXPO_PUBLIC_API_URL` | mobile | Backend base URL |
+| `EMAIL_MODE`, `RESEND_API_KEY`, `EMAIL_FROM` | notification sweep | `log` (default) composes without sending; `live` sends via Resend |
 
 ---
 
@@ -670,23 +698,27 @@ ambiguity, debounce, permission health) · payroll policy (auto lunch, travel
 allocation, operating hours with site overrides, site lockouts) · supervisor
 corrections UI on the web.
 
+Since then: supervisor crew screen on mobile (`/api/crew` + `apps/mobile/app/crew.tsx`),
+office sign-in (`/login`, email magic link, landing on `/auth/callback`),
+exception acknowledge/resolve on SHT 03, CSV payroll export (the no-ERP
+path), last-position site plan on SHT 01, server-sent push nudges, and the
+weekly emailed summary — all covered by the integration suite (163 tests).
+
 **Known gaps** (in rough priority order):
 
-- **Supervisor mobile view.** Crew clock-on/off and approvals exist in the
-  service layer (`clockCrew`, `moveCrewToJob`, approvals) and are tested, but
-  there is no phone screen or API route for them yet — supervisors use the
-  web.
-- **Office login.** The dashboard reads a Supabase cookie session if present,
-  but there is no office sign-in screen/middleware yet; local dev uses the
-  admin fallback. Must be wired before production.
+- **Real SMS provider.** Phone login currently runs on Supabase test-OTP
+  numbers; Twilio (or similar) is needed before real workers sign in with
+  their own numbers.
 - **Geofence task doesn't pre-check operating hours.** An out-of-hours
   background trigger is correctly refused by the server, but the worker just
   sees no clock-in — no notification explains why.
 - **Odoo mapping unconfirmed.** `mapping.ts` runs on assumptions until
   `npm run odoo:probe` output from the real instance settles the job model
   and site-coordinate questions.
-- **Push notifications.** `device.push_token` is captured; nothing sends yet
-  (all current notifications are local, from the geofence task).
+- **Email is log-mode by default.** Weekly summaries compose but do not send
+  until `EMAIL_MODE=live` with a Resend key and verified from-address.
+- **Push needs an EAS project id.** Token capture no-ops (returns null) on a
+  bare dev build with no `extra.eas.projectId` in `app.json`.
 - **Assignments/rostering** is minimally used (the "rostered, not on" board
   reads it; nothing writes it except seeds — Odoo `planning.slot` import is
   future work).
