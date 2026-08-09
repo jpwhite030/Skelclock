@@ -9,3 +9,8 @@ build/
 .pgdata/
 .shots/
 .DS_Store
+
+# Local AI-agent tooling (skills installer output) — per-developer, not app code.
+.agents/
+.claude/
+skills-lock.json

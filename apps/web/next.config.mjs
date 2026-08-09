@@ -1,3 +1,19 @@
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+// The repo keeps one .env at the monorepo root (matches .env.example and
+// every script under scripts/), but Next's own env loading only ever looks
+// inside this app's own directory. Without this, DATABASE_URL and the
+// Supabase vars are silently undefined here even though they're set — the
+// app falls back to the in-process demo database instead of failing loudly.
+// Node's own loadEnvFile never overwrites a var the environment already set,
+// so this is a no-op in CI/production where those are set directly.
+try {
+  process.loadEnvFile(join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.env'));
+} catch {
+  // No root .env — fine locally in demo mode, and expected in CI/production.
+}
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // The workspace packages ship TypeScript source rather than a build step, so
