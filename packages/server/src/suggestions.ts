@@ -124,11 +124,23 @@ export async function confirmSuggestedEvent(
 ): Promise<{ eventId: string; timesheetId: string | null }> {
   const row = await loadOwnSuggestion(db, args);
   const now = args.now ?? new Date();
+  const candidates = row.candidate_job_ids ?? [];
 
-  if (args.jobId && !(row.candidate_job_ids ?? []).includes(args.jobId)) {
+  if (args.jobId) {
+    if (!candidates.includes(args.jobId)) {
+      throw new SuggestionError(
+        'That job was not one of the sites this arrival matched.',
+        'invalid_candidate_job',
+      );
+    }
+  } else if (candidates.length > 1) {
+    // Ambiguous, and nothing given to disambiguate with. Falling through to
+    // the no-jobId branch below would confirm to whatever job happened to be
+    // stored on the row already (the mobile client's own first guess) — the
+    // opposite of "the worker is picking which candidate they meant."
     throw new SuggestionError(
-      'That job was not one of the sites this arrival matched.',
-      'invalid_candidate_job',
+      'This arrival matched more than one site — say which one before confirming.',
+      'candidate_job_required',
     );
   }
 

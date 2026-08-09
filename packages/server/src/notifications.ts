@@ -21,8 +21,6 @@
  * "works without the external system" rule the ERP integration follows.
  */
 
-import { isWithinOperatingHours } from '@skelclock/core';
-
 import { one, type Db } from './db.js';
 import { getWorkingNow } from './queries.js';
 
@@ -264,16 +262,26 @@ async function sweepMissingClockOuts(
       end = site?.operating_hours_end ?? end;
     }
 
-    const pastClose =
-      end != null
-        ? // Outside [00:00, end+grace) — evaluated as "no longer within a
-          // window that runs to end-of-shift plus grace". Overnight windows
-          // are the ingest check's problem; the nudge only needs "well past".
-          !isWithinOperatingHours(local.minutes, {
-            start: '00:00',
-            end: minutesToHM(Math.min(hmToMinutes(end) + grace, 24 * 60 - 1)),
-          })
-        : row.minutesWorked >= fallback;
+    // Measured from this shift's own clock-in, not "is `now` inside today's
+    // window" — a fixed same-day window reads a legitimate 22:00-to-06:00
+    // overnight shift as "past close" within minutes of starting, since
+    // every hour from close-plus-grace to midnight falls outside it. Instead:
+    // how many minutes from the clock-in itself to the next occurrence of the
+    // closing time (wrapping past midnight exactly as an overnight shift
+    // does), compared against how many minutes have actually elapsed.
+    const pastClose = ((): boolean => {
+      if (end == null || !row.clockInTime) return row.minutesWorked >= fallback;
+
+      const clockInDate = new Date(row.clockInTime);
+      const clockInLocalMinutes = localParts(clockInDate, company.timezone).minutes;
+      const endMinutes = hmToMinutes(end);
+      const minutesUntilClose =
+        endMinutes > clockInLocalMinutes
+          ? endMinutes - clockInLocalMinutes
+          : 24 * 60 - clockInLocalMinutes + endMinutes;
+      const elapsedMinutes = (now.getTime() - clockInDate.getTime()) / 60_000;
+      return elapsedMinutes >= minutesUntilClose + grace;
+    })();
 
     if (!pastClose) continue;
 
@@ -438,9 +446,6 @@ const hmToMinutes = (hm: string): number => {
   const [h, m] = hm.split(':');
   return Number(h) * 60 + Number(m);
 };
-
-const minutesToHM = (total: number): string =>
-  `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
 
 const fmtHours = (minutes: number): string =>
   `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`;

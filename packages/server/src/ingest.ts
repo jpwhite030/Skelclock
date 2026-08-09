@@ -13,6 +13,7 @@
 
 import {
   applyTransition,
+  blocksClockIn,
   deriveState,
   evaluateGeofence,
   isValidIdempotencyKey,
@@ -183,25 +184,20 @@ async function ingestOne(
     };
   }
 
-  // --- state machine -------------------------------------------------------
   const priorEvents = await loadRecentEvents(db, employee.id, event.deviceTime);
-  const state = deriveState(priorEvents);
-  const transition = applyTransition(state, event.eventType);
-
-  if (!transition.ok) {
-    return {
-      status: 'rejected',
-      idempotencyKey: key,
-      code: transition.code,
-      message: transition.message,
-    };
-  }
 
   // --- debounce (auto-geofence only) ----------------------------------------
   // GPS bouncing right at a fence edge can retrigger the OS region callback
   // several times in a row. Folding into the existing row — rather than
   // creating a second one — is exactly what "duplicate" already means to the
   // queue: silent, no retry, nothing for the worker to dismiss.
+  //
+  // Checked before the state machine, deliberately: a confident bounce (high
+  // accuracy, auto-confirmed) is exactly the case that has already moved the
+  // worker's state — orderedLiveEvents does not skip it the way it skips a
+  // still-suggested event. Checking the state machine first would reject the
+  // bounce as "already clocked in" before this debounce ever ran, turning a
+  // fence-edge wobble into a worker-visible error banner nobody caused.
   if (event.clockMethod === 'auto_geofence') {
     const recentSame = priorEvents.find(
       (e) =>
@@ -214,6 +210,19 @@ async function ingestOne(
     if (recentSame) {
       return { status: 'duplicate', idempotencyKey: key, eventId: recentSame.id };
     }
+  }
+
+  // --- state machine -------------------------------------------------------
+  const state = deriveState(priorEvents);
+  const transition = applyTransition(state, event.eventType);
+
+  if (!transition.ok) {
+    return {
+      status: 'rejected',
+      idempotencyKey: key,
+      code: transition.code,
+      message: transition.message,
+    };
   }
 
   // --- site: unknown-job, hard exclusion, geofence --------------------------
@@ -265,6 +274,32 @@ async function ingestOne(
     });
     insideGeofence = result.insideGeofence;
     distanceM = result.distanceM;
+
+    // Confidently outside the fence refuses a clock-on — blocksClockIn's own
+    // doc comment calls this "the one rule in the system that can stop
+    // someone starting work." The phone already refuses to even queue a press
+    // that fails this same test (apps/mobile/src/useClock.ts), but the server
+    // is the actual trust boundary: a request that skips the app entirely — a
+    // scripted client, a modified build — must not be able to grant itself a
+    // clock the honest app would have refused. Never gates clock_out, and
+    // never applies when a person is deciding on someone else's behalf (crew
+    // clock, a missed-time entry) — same reasoning as the operating-hours
+    // bypass just below.
+    if (
+      event.eventType === 'clock_in' &&
+      (event.clockMethod === 'manual' || event.clockMethod === 'auto_geofence') &&
+      blocksClockIn(result)
+    ) {
+      return {
+        status: 'rejected',
+        idempotencyKey: key,
+        code: 'outside_geofence',
+        message:
+          distanceM != null
+            ? `You are about ${Math.round(distanceM)}m from the site, and you have to be on site to clock on.`
+            : 'You have to be on site to clock on.',
+      };
+    }
   }
 
   // --- operating hours -------------------------------------------------------
@@ -415,7 +450,14 @@ async function ingestOne(
         timesheetId,
         insideGeofence,
         distanceM,
-        autoConfirmed: !isSuggested,
+        // Not !isSuggested: that's true for every manual/supervisor/admin
+        // clock too, since only an auto_geofence event is ever suggested in
+        // the first place. This field means one specific thing — did the
+        // server's own GPS confidence check confirm this event without a
+        // tap — so it must be exactly the variable that answered that
+        // question, not a stand-in that happens to agree only for the one
+        // clock method currently reading it.
+        autoConfirmed,
       };
     },
     {

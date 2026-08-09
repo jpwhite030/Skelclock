@@ -291,6 +291,13 @@ test('operating hours: no window means no restriction', () => {
   assert.equal(isWithinOperatingHours(3 * 60, { start: '06:00', end: null }), true);
 });
 
+test('operating hours: equal start and end is 24 hours, not permanently closed', () => {
+  const window = { start: '00:00', end: '00:00' };
+  assert.equal(isWithinOperatingHours(0, window), true);
+  assert.equal(isWithinOperatingHours(12 * 60, window), true);
+  assert.equal(isWithinOperatingHours(23 * 60 + 59, window), true);
+});
+
 test('minutesSinceLocalMidnight reads the device clock, not UTC', () => {
   const d = new Date(2026, 7, 4, 6, 30); // constructed in local time on purpose
   assert.equal(minutesSinceLocalMidnight(d), 6 * 60 + 30);

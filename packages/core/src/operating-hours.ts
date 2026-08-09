@@ -46,6 +46,11 @@ export function isWithinOperatingHours(
   const start = parseHM(window.start);
   const end = parseHM(window.end);
   if (start === null || end === null) return true;
+  // Equal start and end is 24 hours, not zero. start<=end below would read it
+  // as "the window from X to X", which is never true — every clock-in would
+  // be permanently refused for an admin who set matching times almost
+  // certainly meaning "no restriction."
+  if (start === end) return true;
 
   return start <= end
     ? localMinutes >= start && localMinutes < end

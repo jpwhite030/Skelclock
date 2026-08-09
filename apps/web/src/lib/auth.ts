@@ -54,7 +54,12 @@ function serviceClient() {
  * token that names its own user is a total authentication bypass, so it must
  * never be reachable anywhere a real worker's hours live.
  */
-const demoAuth = !process.env.SUPABASE_URL && process.env.NODE_ENV !== 'production';
+// Both env vars, matching getDashboardSession()'s own gate exactly — a
+// deployment with one set and not the other must fail toward "no demo
+// bypass," not toward "accepts demo:<phone> because one var was blank."
+const demoAuth =
+  !(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) &&
+  process.env.NODE_ENV !== 'production';
 
 const DEMO_PREFIX = 'demo:';
 

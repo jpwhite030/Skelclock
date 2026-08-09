@@ -49,6 +49,7 @@ import {
   supervises,
   updateCompanySettings,
   updateExceptionStatus,
+  updateSiteOperatingHours,
   voidEvent,
   WorkflowError,
   type Db,
@@ -342,7 +343,44 @@ test('AC4: an inside-fence clock records the distance and the verdict', async ()
   }
 });
 
-test('AC4: an outside-fence clock is accepted, flagged, and never blocked', async () => {
+// The brief's original AC4 was "GPS never blocks a worker" — true when this
+// suite was written, no longer true today. blocksClockIn() (packages/core/
+// src/geo.ts) was added later as a deliberate, reviewed reversal: a *confident*
+// off-site clock-on is now refused outright, closed server-side alongside the
+// client so a request that skips the app cannot grant itself a clock the app
+// itself would have refused. What AC4 actually protects — that GPS
+// *uncertainty* must never cost someone a shift — still holds exactly as
+// before, and clock-out is still never blocked under any circumstance. The
+// three tests below draw that line precisely instead of asserting the old
+// blanket "never blocked".
+
+test('AC4: a confident off-site clock-in is refused, not silently accepted', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    const result = await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [
+        clockEvent(fx, {
+          // The default 8m accuracy from clockEvent() — exactly the
+          // "we are confident where you are" case blocksClockIn exists for.
+          eventType: 'clock_in',
+          deviceTime: '2026-08-04T06:00:00Z',
+          latitude: OFF_SITE.latitude,
+          longitude: OFF_SITE.longitude,
+        }),
+      ],
+    });
+
+    const outcome = result.outcomes[0]!;
+    assert.equal(outcome.status, 'rejected');
+    assert.equal(outcome.status === 'rejected' && outcome.code, 'outside_geofence');
+  } finally {
+    await close();
+  }
+});
+
+test('AC4: GPS uncertainty never blocks a clock-in — a loose fix is flagged, not refused', async () => {
   const { db, fx, close } = await freshDb();
   try {
     const result = await ingestEvents(db, {
@@ -354,15 +392,17 @@ test('AC4: an outside-fence clock is accepted, flagged, and never blocked', asyn
           deviceTime: '2026-08-04T06:00:00Z',
           latitude: OFF_SITE.latitude,
           longitude: OFF_SITE.longitude,
+          // Error bars alone could reach all the way back to the site: the
+          // system genuinely does not know which side of the fence this is,
+          // and a guess in that state must not cost a shift.
+          gpsAccuracyM: 4500,
         }),
       ],
     });
 
-    // The clock is never refused — that is the explicit instruction in the brief.
-    assert.equal(result.outcomes[0]!.status, 'created');
     const outcome = result.outcomes[0]!;
+    assert.equal(outcome.status, 'created');
     assert.equal(outcome.status === 'created' && outcome.insideGeofence, false);
-    assert.ok(outcome.status === 'created' && outcome.distanceM! > 3000);
 
     const exceptions = await listExceptions(db, { companyId: fx.companyId });
     assert.ok(exceptions.some((e) => e.type === 'outside_geofence'));
@@ -371,16 +411,52 @@ test('AC4: an outside-fence clock is accepted, flagged, and never blocked', asyn
   }
 });
 
-test('AC4: an outside-fence clock with a reason does not raise an exception', async () => {
+test('AC4: a confident off-site clock-out is still never blocked — a worker who has left must be able to end their shift', async () => {
   const { db, fx, close } = await freshDb();
   try {
     await ingestEvents(db, {
       companyId: fx.companyId,
       now: NOW,
+      events: [clockEvent(fx, { eventType: 'clock_in', deviceTime: '2026-08-04T06:00:00Z' })],
+    });
+
+    const result = await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
       events: [
         clockEvent(fx, {
-          eventType: 'clock_in',
-          deviceTime: '2026-08-04T06:00:00Z',
+          eventType: 'clock_out',
+          deviceTime: '2026-08-04T14:00:00Z',
+          latitude: OFF_SITE.latitude,
+          longitude: OFF_SITE.longitude,
+        }),
+      ],
+    });
+
+    assert.equal(result.outcomes[0]!.status, 'created');
+    const exceptions = await listExceptions(db, { companyId: fx.companyId });
+    assert.ok(exceptions.some((e) => e.type === 'outside_geofence'));
+  } finally {
+    await close();
+  }
+});
+
+test('AC4: an outside-fence clock-out with a reason does not raise an exception', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [clockEvent(fx, { eventType: 'clock_in', deviceTime: '2026-08-04T06:00:00Z' })],
+    });
+
+    await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [
+        clockEvent(fx, {
+          eventType: 'clock_out',
+          deviceTime: '2026-08-04T14:00:00Z',
           latitude: OFF_SITE.latitude,
           longitude: OFF_SITE.longitude,
           outsideReason: 'Gate locked, parked in the overflow yard up the road',
@@ -1802,6 +1878,20 @@ test('Phase 3: two sites at once never auto-confirms, and the worker picks which
     )[0]!;
     assert.deepEqual(new Set(suggestion.candidateJobIds), new Set([fx.jobId, otherJob.id]));
 
+    // Confirming an ambiguous suggestion with no jobId at all is refused —
+    // it must not silently keep whatever job happened to land on the row.
+    await assert.rejects(
+      () =>
+        confirmSuggestedEvent(db, {
+          companyId: fx.companyId,
+          employeeId: fx.employeeId,
+          eventId: suggestion.id,
+          actorUserId: fx.workerUserId,
+          now: NOW,
+        }),
+      (error: unknown) => error instanceof SuggestionError && error.code === 'candidate_job_required',
+    );
+
     // Picking a job that was not one of the candidates is refused.
     await assert.rejects(
       () =>
@@ -2310,7 +2400,10 @@ test('travel allocation, set to first_site, reaches the worker home screen throu
 test('an exception can be acknowledged and resolved; resolving demands a note', async () => {
   const { db, fx, close } = await freshDb();
   try {
-    // A 4km-off-site clock-in with no reason raises outside_geofence.
+    // A 4km-off-site clock-in with no reason raises outside_geofence. Loose
+    // accuracy, deliberately: this test is about the exception lifecycle, not
+    // geofence blocking — a confident fix here would be refused outright by
+    // blocksClockIn (see the AC4 tests) and never reach the exceptions list.
     await ingestEvents(db, {
       companyId: fx.companyId,
       events: [
@@ -2319,6 +2412,7 @@ test('an exception can be acknowledged and resolved; resolving demands a note', 
           deviceTime: '2026-08-03T20:00:00Z',
           latitude: OFF_SITE.latitude,
           longitude: OFF_SITE.longitude,
+          gpsAccuracyM: 4500,
         }),
       ],
       now: NOW,
@@ -2507,6 +2601,57 @@ test('the weekly summary emails last week once per employee, Monday morning loca
       email,
     });
     assert.equal(tuesday.emailsSent, 0);
+  } finally {
+    await close();
+  }
+});
+
+test('the missing clock-out sweep does not fire minutes into a legitimate overnight shift', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await updateSiteOperatingHours(db, {
+      companyId: fx.companyId,
+      siteId: fx.siteId,
+      start: '18:00',
+      end: '06:00', // overnight: 6pm to 6am
+    });
+
+    // Clocked in at 22:00 local (Sydney, +10 in August) for a legitimate
+    // overnight shift that runs to 06:00.
+    await ingestEvents(db, {
+      companyId: fx.companyId,
+      events: [clockEvent(fx, { eventType: 'clock_in', deviceTime: '2026-08-04T12:00:00Z' })],
+      now: NOW,
+    });
+
+    await db.query(
+      `insert into device (company_id, app_user_id, device_id, push_token, last_seen_at)
+       values ($1, $2, 'test-device', 'ExponentPushToken[test]', now())`,
+      [fx.companyId, fx.workerUserId],
+    );
+
+    const sent: PushMessage[] = [];
+    const push: PushSender = async (messages) => {
+      sent.push(...messages);
+    };
+    const noEmail: EmailSender = { channel: 'log', send: async () => undefined };
+
+    // Five minutes after clocking in — nowhere near the 06:00 close.
+    const fiveMinutesLater = await runNotificationSweep(db, {
+      now: new Date('2026-08-04T12:05:00Z'),
+      push,
+      email: noEmail,
+    });
+    assert.equal(fiveMinutesLater.pushSent, 0, 'must not nudge minutes into an overnight shift');
+    assert.equal(sent.length, 0);
+
+    // 06:35 local — five minutes past the 30-minute grace after 06:00 close.
+    const pastClose = await runNotificationSweep(db, {
+      now: new Date('2026-08-04T20:35:00Z'),
+      push,
+      email: noEmail,
+    });
+    assert.equal(pastClose.pushSent, 1, 'must nudge once genuinely past close plus grace');
   } finally {
     await close();
   }

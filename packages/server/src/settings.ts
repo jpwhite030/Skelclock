@@ -181,7 +181,10 @@ export async function checkOperatingHours(
 
   const start = args.siteHoursStart ?? row.operating_hours_start;
   const end = args.siteHoursEnd ?? row.operating_hours_end;
-  if (!start || !end) return { allowed: true, message: '' };
+  // Equal start and end is 24 hours, not zero — see the identical guard and
+  // its reasoning in packages/core/src/operating-hours.ts, the phone-side
+  // mirror of this exact check.
+  if (!start || !end || start === end) return { allowed: true, message: '' };
 
   const withinHours =
     start <= end

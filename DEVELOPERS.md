@@ -666,10 +666,21 @@ existing Phase-3 tests use 45–60 deliberately.
 3. **Idempotency keys are minted at press time, on the phone**, and replayed
    verbatim on retry. Three independent duplicate guards exist (key, state
    machine, Odoo search-before-create) — all three stay.
-4. **GPS never blocks a worker.** Outside the fence asks for a reason and
-   raises an exception; it does not refuse. The only hard refusals are the
-   two deliberate, human-configured ones: site exclusion and operating hours
-   — and operating hours never gates a clock-out.
+4. **GPS uncertainty never blocks a worker; GPS confidence, on a clock-in,
+   now can.** Revised from the brief's original "GPS must never stop someone
+   starting work" — a deliberate, reviewed reversal, not an oversight. No
+   fix, no site coordinates, or error bars reaching the fence all still pass
+   through untouched (`blocksClockIn`, `packages/core/src/geo.ts` — same
+   three exceptions as `shouldRaiseGeofenceException`, by design). Only a
+   position the system is *confident* is beyond the fence refuses a
+   clock-**in**, enforced identically on both ends: the phone won't even
+   queue the press (`apps/mobile/src/useClock.ts`), and `ingestEvents`
+   refuses it too, so a request that skips the app cannot grant itself a
+   clock the app would have refused. Clock-**out** is never blocked, by
+   anything, under any circumstance — a worker who has already left must
+   always be able to end their shift. Site exclusion and operating hours
+   remain the other two hard refusals; operating hours still never gates a
+   clock-out either.
 5. **Location is captured at clock events only, and off-site positions are
    never plotted.** There is no continuous tracking anywhere in the system —
    background geofencing wakes the app at fence crossings, nothing more. On
