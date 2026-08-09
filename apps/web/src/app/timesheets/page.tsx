@@ -157,6 +157,11 @@ export default async function TimesheetsPage({
         </label>
 
         <span className="grow" />
+        {/* Same form, different destination: the export route receives exactly
+            the filters on screen, so the CSV is always the ledger being read. */}
+        <button type="submit" className="act" formAction="/timesheets/export">
+          Export CSV
+        </button>
         <button type="submit" className="btn">Apply</button>
       </form>
 

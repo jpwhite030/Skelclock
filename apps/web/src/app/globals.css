@@ -506,6 +506,9 @@ main.paper {
 .act:hover { color: var(--cad-magenta); border-bottom-color: var(--cad-magenta); }
 .act[data-busy] { color: var(--cad-yellow); border-bottom-style: dashed; cursor: progress; }
 .act:disabled { color: var(--faint); border-bottom-color: var(--line); cursor: not-allowed; }
+/* Bone-on-paper is invisible; on the light surface the action writes in ink. */
+.paper .act { color: var(--ink); border-bottom-color: var(--ink-faint, var(--paper-line)); }
+.paper .act:hover { color: var(--cad-magenta-ink); border-bottom-color: var(--cad-magenta-ink); }
 
 /* ============================================================================
    SHT 02a — TIMESHEET CORRECTION
@@ -806,6 +809,27 @@ main.paper {
 .minimap i { position: absolute; right: 0; display: block; height: 2px; }
 .minimap i[data-sev="1"] { width: 12px; background: var(--cad-magenta); }
 .minimap i[data-sev="2"] { width: 8px;  background: var(--cad-yellow); }
+
+/* The verbs on an exception row. Text actions, not buttons — SHT 03 is a
+   mark-up, and a boxed button would outweigh the annotation it belongs to. */
+.exc-actions { display: flex; gap: var(--r-2); align-items: baseline; margin-top: var(--r-8); }
+
+/* SHT 01's site plan — last clock positions over the geofences. */
+.working-map-block { margin-top: var(--r-2); }
+.working-map { height: 360px; border: 1px solid var(--line-strong); overflow: hidden; }
+.working-map--loading {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--faint); font: 400 12px var(--font-mono);
+}
+
+/* Sign-in. One field, one button, same spec-line materials as everywhere. */
+.login-form { display: flex; flex-direction: column; gap: var(--r-2); max-width: 52ch; }
+.login-form__row { display: flex; gap: var(--r-4); }
+.login-form__row input {
+  flex: 1; background: var(--canvas); border: 1px solid var(--line-strong);
+  color: var(--bone); font: 500 13px var(--font-mono); padding: 5px 8px; min-height: 28px;
+}
+.login-form__row input:focus-visible { border-color: var(--cad-yellow); outline: none; }
 
 /* ============================================================================
    SHT 04 — SITE GEOFENCES (setout)

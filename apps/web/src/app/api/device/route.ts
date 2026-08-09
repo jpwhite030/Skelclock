@@ -21,6 +21,7 @@ export async function POST(request: Request): Promise<Response> {
       platform: body.platform ?? null,
       appVersion: body.appVersion ?? null,
       locationPermission: body.locationPermission ?? null,
+      pushToken: body.pushToken ?? null,
     });
 
     return Response.json(deviceCheckinResponseSchema.parse({ status: 'ok' }));

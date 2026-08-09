@@ -1,3 +1,4 @@
+import { workerHomeSchema } from '@skelclock/contracts';
 import { getWorkerHome } from '@skelclock/server';
 
 import { db } from '../../../lib/db';
@@ -26,7 +27,7 @@ export async function GET(request: Request): Promise<Response> {
       workDate: date,
     });
 
-    return Response.json(home, {
+    return Response.json(workerHomeSchema.parse({ ...home, role: caller.role }), {
       // Never cached: this is live shift state.
       headers: { 'Cache-Control': 'no-store' },
     });

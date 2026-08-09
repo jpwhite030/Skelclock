@@ -12,7 +12,12 @@
  */
 
 import { createOdooAdapter } from '@skelclock/odoo';
-import { retrySyncJob, runSyncWorker } from '@skelclock/server';
+import {
+  emailSenderFromEnv,
+  retrySyncJob,
+  runNotificationSweep,
+  runSyncWorker,
+} from '@skelclock/server';
 
 import { db } from '../../../lib/db';
 import { authErrorResponse, requireCaller, requireRole } from '../../../lib/auth';
@@ -57,7 +62,15 @@ export async function GET(request: Request): Promise<Response> {
   try {
     // No companyId: the cron drains every tenant's queue.
     const result = await runSyncWorker(db, createOdooAdapter(process.env), { limit: 100 });
-    return Response.json(result);
+
+    // Same heartbeat drives the outbound messages — a second cron would be
+    // one more thing to deploy and forget. The notification_log dedupe makes
+    // running this every few minutes safe.
+    const notifications = await runNotificationSweep(db, {
+      email: emailSenderFromEnv(process.env),
+    });
+
+    return Response.json({ ...result, notifications });
   } catch (error) {
     console.error('scheduled sync failed', error);
     return Response.json({ error: 'Scheduled sync failed.' }, { status: 500 });

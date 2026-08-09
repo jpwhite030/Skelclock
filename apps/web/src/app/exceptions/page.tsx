@@ -21,6 +21,7 @@ import { listExceptions, listStaleSuggestions, type ExceptionRow } from '@skelcl
 import { db } from '../../lib/db';
 import { getDashboardSession } from '../../lib/session';
 import { NoSession, SessionWarning } from '../../components/session-state';
+import { ExceptionActions } from './exception-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -74,6 +75,7 @@ export default async function ExceptionsPage({
   const high = rows.filter((r) => r.severity === 1);
   const medium = rows.filter((r) => r.severity === 2);
   const info = rows.filter((r) => r.severity === 3);
+  const canAct = session.role === 'admin' || session.role === 'supervisor';
 
   return (
     <main>
@@ -160,6 +162,11 @@ export default async function ExceptionsPage({
               </div>
               <p className="mark__what">{r.message}</p>
               {GUIDANCE[r.type] && <p className="mark__todo">{GUIDANCE[r.type]}</p>}
+              {/* Stale suggestions are computed live, not stored — there is no
+                  row to acknowledge. They clear when the worker acts. */}
+              {canAct && r.type !== 'stale_suggestion' && (
+                <ExceptionActions exceptionId={r.id} status={r.status} />
+              )}
             </article>
           ))}
         </section>
@@ -187,6 +194,9 @@ export default async function ExceptionsPage({
                   {TYPE_LABELS[r.type] ?? r.type}
                 </div>
                 <div className="medgrid__msg">{r.message}</div>
+                {canAct && r.type !== 'stale_suggestion' && (
+                  <ExceptionActions exceptionId={r.id} status={r.status} />
+                )}
               </div>
             ))}
           </div>
