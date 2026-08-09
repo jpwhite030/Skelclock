@@ -13,6 +13,7 @@ import { revalidatePath } from 'next/cache';
 import {
   addSiteExclusion,
   canManageEmployee,
+  createSite as createSiteRecord,
   removeSiteExclusion,
   SiteError,
   updateSiteLocation,
@@ -123,4 +124,92 @@ export async function removeExclusion(exclusionId: string): Promise<SaveLocation
   await removeSiteExclusion(db, { companyId: access.companyId, exclusionId });
   revalidatePath('/sites');
   return { ok: true, message: 'Removed.' };
+}
+
+// --- add a site by address ---------------------------------------------------
+
+export interface GeocodeResult {
+  label: string;
+  latitude: number;
+  longitude: number;
+}
+
+/**
+ * Server-side on purpose: Nominatim's usage policy requires a descriptive
+ * User-Agent identifying the calling application, and a browser's own fetch
+ * cannot set that header itself — only a server-side request can.
+ */
+export async function geocodeAddress(query: string): Promise<GeocodeResult[]> {
+  const session = await getDashboardSession();
+  if (!session) return [];
+
+  const q = query.trim();
+  if (q.length < 3) return [];
+
+  const url = new URL('https://nominatim.openstreetmap.org/search');
+  url.searchParams.set('q', q);
+  url.searchParams.set('format', 'jsonv2');
+  url.searchParams.set('limit', '5');
+  // SkelScaff's own sites are all AU — narrows an ambiguous street name to
+  // the right country instead of the top global match.
+  url.searchParams.set('countrycodes', 'au');
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: { 'User-Agent': 'SkelClock/1.0 (site setup; matt@skelscaff.com.au)' },
+    });
+  } catch {
+    return [];
+  }
+  if (!response.ok) return [];
+
+  const results = (await response.json()) as Array<{
+    display_name: string;
+    lat: string;
+    lon: string;
+  }>;
+
+  return results.map((r) => ({
+    label: r.display_name,
+    latitude: Number(r.lat),
+    longitude: Number(r.lon),
+  }));
+}
+
+export interface CreateSiteResult extends SaveLocationResult {
+  siteId?: string;
+}
+
+export async function createSite(args: {
+  name: string;
+  address: string | null;
+  latitude: number;
+  longitude: number;
+  geofenceRadiusM: number;
+  hoursStart: string | null;
+  hoursEnd: string | null;
+}): Promise<CreateSiteResult> {
+  const access = await requireSiteEditor();
+  if (!access.ok) return access.result;
+
+  try {
+    const site = await createSiteRecord(db, {
+      companyId: access.companyId,
+      name: args.name,
+      address: args.address,
+      latitude: args.latitude,
+      longitude: args.longitude,
+      geofenceRadiusM: args.geofenceRadiusM,
+      operatingHoursStart: args.hoursStart,
+      operatingHoursEnd: args.hoursEnd,
+    });
+    revalidatePath('/sites');
+    return { ok: true, message: `${site.name} created.`, siteId: site.id };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof SiteError ? error.message : 'Could not create the site.',
+    };
+  }
 }

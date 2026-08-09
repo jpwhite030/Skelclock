@@ -10,14 +10,14 @@
  * longitude / geofence_radius_m outside of the Odoo import.
  */
 
-import { Fragment, useMemo, useState, useTransition } from 'react';
-import { MapContainer, TileLayer, Marker, Circle, useMapEvents } from 'react-leaflet';
+import { Fragment, useEffect, useMemo, useState, useTransition } from 'react';
+import { MapContainer, TileLayer, Marker, Circle, useMap, useMapEvents } from 'react-leaflet';
 import L, { type LatLngExpression } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
 import type { SiteSummary } from '@skelclock/server';
 
-import { saveSiteLocation } from './server-actions';
+import { createSite, geocodeAddress, saveSiteLocation, type GeocodeResult } from './server-actions';
 
 // Leaflet's default marker images are resolved as relative URLs against the
 // CSS file, which breaks under Next's bundler. An inline SVG sidesteps the
@@ -81,12 +81,51 @@ function PlaceOnClick({
   return null;
 }
 
+/** Recentres the map when a geocoded address lands somewhere else entirely —
+ * MapContainer's own `center` prop only ever applies once, on first paint.
+ * Depends on the scalar coordinates, not a position array: an array literal
+ * is a new identity every render, and flying on every render means the map
+ * re-centres each time a letter is typed into the name field. */
+function FlyTo({ latitude, longitude }: { latitude: number; longitude: number }) {
+  const map = useMap();
+  useEffect(() => {
+    map.flyTo([latitude, longitude], 17);
+  }, [map, latitude, longitude]);
+  return null;
+}
+
+interface NewSiteDraft {
+  name: string;
+  address: string | null;
+  latitude: number;
+  longitude: number;
+  geofenceRadiusM: number;
+  hoursStart: string;
+  hoursEnd: string;
+}
+
+/** A short, human name from a Nominatim display_name — its first comma-
+ * separated segment is usually the building/street number, not the suburb
+ * and state that make the rest of the string too long for a site name. */
+function nameFromAddress(label: string): string {
+  return label.split(',')[0]?.trim() ?? label;
+}
+
 export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: boolean }) {
   const [drafts, setDrafts] = useState<Record<string, Draft>>(() => toDrafts(sites));
   const [armedSiteId, setArmedSiteId] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [savingId, setSavingId] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, { ok: boolean; message: string }>>({});
+
+  // --- adding a new site by address --------------------------------------
+  const [addingSite, setAddingSite] = useState(false);
+  const [query, setQuery] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState<GeocodeResult[] | null>(null);
+  const [newSite, setNewSite] = useState<NewSiteDraft | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [addMessage, setAddMessage] = useState<string | null>(null);
 
   const center = useMemo<LatLngExpression>(() => {
     const first = Object.values(drafts)[0];
@@ -114,6 +153,62 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
     });
   };
 
+  const cancelAdd = () => {
+    setAddingSite(false);
+    setQuery('');
+    setSearching(false);
+    setSearchResults(null);
+    setNewSite(null);
+    setAddMessage(null);
+  };
+
+  const runSearch = async () => {
+    setSearching(true);
+    setSearchResults(null);
+    const results = await geocodeAddress(query);
+    setSearchResults(results);
+    setSearching(false);
+  };
+
+  const pickResult = (r: GeocodeResult) => {
+    setNewSite({
+      name: nameFromAddress(r.label),
+      address: r.label,
+      latitude: r.latitude,
+      longitude: r.longitude,
+      geofenceRadiusM: 70,
+      hoursStart: '',
+      hoursEnd: '',
+    });
+    setSearchResults(null);
+  };
+
+  const moveNewSite = (lat: number, lng: number) => {
+    setNewSite((prev) => (prev ? { ...prev, latitude: lat, longitude: lng } : prev));
+  };
+
+  const saveNewSite = () => {
+    if (!newSite || !newSite.name.trim()) return;
+    setCreating(true);
+    startTransition(async () => {
+      const result = await createSite({
+        name: newSite.name,
+        address: newSite.address,
+        latitude: newSite.latitude,
+        longitude: newSite.longitude,
+        geofenceRadiusM: newSite.geofenceRadiusM,
+        hoursStart: newSite.hoursStart || null,
+        hoursEnd: newSite.hoursEnd || null,
+      });
+      if (result.ok) {
+        cancelAdd();
+      } else {
+        setAddMessage(result.message);
+      }
+      setCreating(false);
+    });
+  };
+
   const save = (siteId: string) => {
     const draft = drafts[siteId];
     if (!draft) return;
@@ -136,6 +231,110 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
   return (
     <div className="sites-layout">
       <div className="sites-list">
+        {canEdit && (
+          <div className="site-add">
+            {!addingSite ? (
+              <button className="act" onClick={() => setAddingSite(true)}>+ Add a site</button>
+            ) : (
+              <div className="site-add__form">
+                <div className="site-add__search">
+                  <input
+                    type="text"
+                    placeholder="Search an address…"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        void runSearch();
+                      }
+                    }}
+                    autoFocus
+                  />
+                  <button
+                    className="act"
+                    disabled={searching || query.trim().length < 3}
+                    onClick={() => void runSearch()}
+                  >
+                    {searching ? 'Searching…' : 'Find'}
+                  </button>
+                  <button className="act" onClick={cancelAdd}>Cancel</button>
+                </div>
+
+                {searchResults && searchResults.length > 0 && !newSite && (
+                  <div className="site-add__results">
+                    {searchResults.map((r, i) => (
+                      <button key={i} className="site-add__result" onClick={() => pickResult(r)}>
+                        {r.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {searchResults && searchResults.length === 0 && (
+                  <p className="lbl" style={{ color: 'var(--faint)' }}>
+                    No matches. Try a fuller address.
+                  </p>
+                )}
+
+                {newSite && (
+                  <>
+                    <div className="correction-row__form">
+                      <label className="lbl" style={{ flex: '1 1 100%' }}>
+                        Site name
+                        <input
+                          type="text"
+                          value={newSite.name}
+                          onChange={(e) => setNewSite({ ...newSite, name: e.target.value })}
+                        />
+                      </label>
+                      <label className="lbl">
+                        Radius m
+                        <input
+                          type="number"
+                          min={10}
+                          step={10}
+                          value={newSite.geofenceRadiusM}
+                          onChange={(e) =>
+                            setNewSite({ ...newSite, geofenceRadiusM: Number(e.target.value) })
+                          }
+                        />
+                      </label>
+                      <label className="lbl">
+                        Opens
+                        <input
+                          type="time"
+                          value={newSite.hoursStart}
+                          onChange={(e) => setNewSite({ ...newSite, hoursStart: e.target.value })}
+                        />
+                      </label>
+                      <label className="lbl">
+                        Closes
+                        <input
+                          type="time"
+                          value={newSite.hoursEnd}
+                          onChange={(e) => setNewSite({ ...newSite, hoursEnd: e.target.value })}
+                        />
+                      </label>
+                      <button
+                        className="btn"
+                        disabled={creating || !newSite.name.trim()}
+                        onClick={saveNewSite}
+                      >
+                        {creating ? 'Saving…' : 'Create site'}
+                      </button>
+                    </div>
+                    <p className="site-add__hint">
+                      Drag the pin on the map to line it up with the actual gate before saving.
+                      Leave hours blank to follow the company default.
+                    </p>
+                  </>
+                )}
+                {addMessage && <span className="mk mk-breach">{addMessage}</span>}
+              </div>
+            )}
+          </div>
+        )}
+
         {sites.map((site) => {
           const draft = drafts[site.id];
           const result = results[site.id];
@@ -210,6 +409,29 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
             maxZoom={19}
           />
           <PlaceOnClick armedSiteId={armedSiteId} onPlace={placeOrMove} />
+
+          {newSite && (
+            <Fragment>
+              <FlyTo latitude={newSite.latitude} longitude={newSite.longitude} />
+              <Circle
+                center={[newSite.latitude, newSite.longitude]}
+                radius={newSite.geofenceRadiusM}
+                pathOptions={{ color: IN_HAND, fillOpacity: 0.08, weight: 1, dashArray: '4 4' }}
+              />
+              <Marker
+                position={[newSite.latitude, newSite.longitude]}
+                icon={DIRTY_ICON}
+                draggable
+                eventHandlers={{
+                  dragend: (e) => {
+                    const { lat, lng } = (e.target as L.Marker).getLatLng();
+                    moveNewSite(lat, lng);
+                  },
+                }}
+              />
+            </Fragment>
+          )}
+
           {sites.map((site) => {
             const draft = drafts[site.id];
             if (!draft) return null;

@@ -185,6 +185,82 @@ export async function excludedSiteIds(db: Db, args: { employeeId: string }): Pro
   return new Set(rows.map((r) => r.site_id));
 }
 
+/**
+ * A site created by hand from the office, rather than arriving with a job
+ * import — the address-search flow on SHT 04 geocodes an address, drops a
+ * pin, and this is what turns that draft into a real site.
+ */
+export async function createSite(
+  db: Db,
+  args: {
+    companyId: string;
+    name: string;
+    address: string | null;
+    latitude: number;
+    longitude: number;
+    geofenceRadiusM: number;
+    operatingHoursStart: string | null;
+    operatingHoursEnd: string | null;
+  },
+): Promise<SiteSummary> {
+  if (!args.name.trim()) {
+    throw new SiteError('A site name is required.');
+  }
+  if (!Number.isFinite(args.latitude) || args.latitude < -90 || args.latitude > 90) {
+    throw new SiteError('Latitude must be between -90 and 90.');
+  }
+  if (!Number.isFinite(args.longitude) || args.longitude < -180 || args.longitude > 180) {
+    throw new SiteError('Longitude must be between -180 and 180.');
+  }
+  if (!(args.geofenceRadiusM > 0)) {
+    throw new SiteError('Geofence radius must be greater than zero.');
+  }
+  if ((args.operatingHoursStart == null) !== (args.operatingHoursEnd == null)) {
+    throw new SiteError('Operating hours need both a start and an end, or neither.');
+  }
+
+  const row = await oneOrFail<{
+    id: string;
+    name: string;
+    address: string | null;
+    latitude: number;
+    longitude: number;
+    geofence_radius_m: number;
+    operating_hours_start: string | null;
+    operating_hours_end: string | null;
+  }>(
+    db,
+    `insert into site (company_id, name, address, latitude, longitude, geofence_radius_m,
+                        operating_hours_start, operating_hours_end)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)
+     returning id, name, address, latitude, longitude, geofence_radius_m,
+               operating_hours_start, operating_hours_end`,
+    [
+      args.companyId,
+      args.name.trim(),
+      args.address,
+      args.latitude,
+      args.longitude,
+      args.geofenceRadiusM,
+      args.operatingHoursStart,
+      args.operatingHoursEnd,
+    ],
+    'Site',
+  );
+
+  return {
+    id: row.id,
+    name: row.name,
+    address: row.address,
+    latitude: row.latitude,
+    longitude: row.longitude,
+    geofenceRadiusM: row.geofence_radius_m,
+    jobCount: 0,
+    operatingHoursStart: row.operating_hours_start,
+    operatingHoursEnd: row.operating_hours_end,
+  };
+}
+
 export async function updateSiteLocation(
   db: Db,
   args: {
