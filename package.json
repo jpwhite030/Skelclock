@@ -14,7 +14,10 @@
     "odoo:probe": "node --import tsx scripts/odoo-probe.ts",
     "db:migrate": "node --import tsx scripts/apply-migrations.ts",
     "shots": "node --import tsx scripts/shots.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "npm run typecheck:packages && npm run typecheck:web && npm run typecheck:mobile",
+    "typecheck:packages": "tsc --noEmit -p tsconfig.json",
+    "typecheck:web": "tsc --noEmit -p apps/web/tsconfig.json",
+    "typecheck:mobile": "tsc --noEmit -p apps/mobile/tsconfig.json"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.3.14",

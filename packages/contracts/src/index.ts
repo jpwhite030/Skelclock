@@ -11,6 +11,7 @@
  * rule as @skelclock/core.
  */
 
+export * from './me.js';
 export * from './home.js';
 export * from './jobs.js';
 export * from './activities.js';

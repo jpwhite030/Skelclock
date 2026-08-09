@@ -1,10 +1,16 @@
 /**
  * Distance and geofence evaluation.
  *
- * The brief is explicit that a worker must never be blocked by this: phone GPS
- * on a scaffold deck, between steel and a brick wall, is routinely 50-100m out
- * and occasionally far worse. So we measure, we record, and we raise an
- * exception — we do not refuse the clock-in.
+ * The brief said a worker must never be blocked by this. That has since been
+ * reversed: blocksClockIn() below refuses an off-site clock-on outright.
+ *
+ * The reasoning that produced the original rule has not gone away, though, and
+ * it is what shapes every function here. Phone GPS on a scaffold deck, between
+ * steel and a brick wall, is routinely 50-100m out and occasionally far worse.
+ * So a position we are unsure of is never treated as a position outside: the
+ * three predicates that act on a fence — raise an exception, refuse a clock-on,
+ * auto-confirm a suggestion — all decline to act on an unknown, and each says
+ * in its own comment which way it fails and why.
  */
 
 const EARTH_RADIUS_M = 6_371_008.8; // IUGG mean radius
@@ -67,6 +73,31 @@ export function distanceMetres(a: LatLng, b: LatLng): number {
   return 2 * EARTH_RADIUS_M * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 }
 
+/**
+ * Initial bearing from `a` to `b`, in degrees clockwise from true north.
+ *
+ * Pairs with distanceMetres to place one point relative to another on a plan:
+ * distance gives the radius, this gives the angle. Forward azimuth rather than
+ * the flat arctangent so it stays right at any latitude, which matters because
+ * longitude degrees shrink towards the poles and Wollongong is far enough
+ * south that treating lat/lng as a square grid visibly skews the direction.
+ *
+ * Returns 0 when the two points coincide — a bearing to yourself has no
+ * meaning, and 0 is what a plan draws when there is nothing to point at.
+ */
+export function bearingDegrees(a: LatLng, b: LatLng): number {
+  const lat1 = toRad(a.latitude);
+  const lat2 = toRad(b.latitude);
+  const dLng = toRad(b.longitude - a.longitude);
+
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  if (y === 0 && x === 0) return 0;
+
+  const deg = (Math.atan2(y, x) * 180) / Math.PI;
+  return (deg + 360) % 360;
+}
+
 export function evaluateGeofence(input: GeofenceInput): GeofenceResult {
   const { position, site, radiusM } = input;
   const accuracyM = input.accuracyM ?? 0;
@@ -107,6 +138,36 @@ export function evaluateGeofence(input: GeofenceInput): GeofenceResult {
  * GPS error bars overlap the fence.
  */
 export function shouldRaiseGeofenceException(result: GeofenceResult): boolean {
+  if (result.insideGeofence === null) return false;
+  if (result.insideGeofence) return false;
+  return !result.withinAccuracyMargin;
+}
+
+/**
+ * Whether a clock-on should be refused outright for being off-site.
+ *
+ * This is the one rule in the system that can stop someone starting work, so
+ * what it does *not* block is the important half:
+ *
+ *   No position at all       insideGeofence is null. A worker in a basement,
+ *                            a shed, or with a flat GPS is not "outside" a
+ *                            fence — their position is unknown, and unknown
+ *                            must not cost them a shift.
+ *   Site has no coordinates  Also null. The fence does not exist yet; there
+ *                            is nothing to be outside of.
+ *   Error bars reach the     Phone GPS on a scaffold deck is routinely 50-100m
+ *   fence                    out. If the accuracy margin overlaps the boundary
+ *                            we do not know which side they are on, and a
+ *                            guess in that state is a guess about someone's
+ *                            pay.
+ *
+ * So it refuses only a position we are confident is beyond the fence. That is
+ * deliberately the same test as shouldRaiseGeofenceException, but it is a
+ * separate function because they answer different questions — one troubles a
+ * supervisor, the other stops work — and the day they need to diverge, they
+ * should diverge without one silently changing the other.
+ */
+export function blocksClockIn(result: GeofenceResult): boolean {
   if (result.insideGeofence === null) return false;
   if (result.insideGeofence) return false;
   return !result.withinAccuracyMargin;

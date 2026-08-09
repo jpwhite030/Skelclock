@@ -22,6 +22,7 @@ import {
   geofenceConsentResponseSchema,
   ingestResponseSchema,
   jobsResponseSchema,
+  meSchema,
   pendingSuggestionsResponseSchema,
   suggestionActionResponseSchema,
   timesheetActionResponseSchema,
@@ -34,13 +35,14 @@ import {
   type GeofenceConsentRequestDto,
   type IngestOutcomeDto,
   type JobDto,
+  type MeDto,
   type PendingSuggestionDto,
   type WorkerHomeDto,
 } from '@skelclock/contracts';
 
 import type { QueuedEvent, Transport } from './queue';
 
-export type { ActivityDto, JobDto, PendingSuggestionDto, WorkerHomeDto };
+export type { ActivityDto, CrewDto, JobDto, PendingSuggestionDto, WorkerHomeDto };
 // Kept as the names the rest of the mobile app already imports.
 export type ActivityOption = ActivityDto;
 export type JobOption = JobDto;
@@ -145,6 +147,10 @@ export class ApiClient implements Transport {
       }),
     });
     return outcomes;
+  }
+
+  me(): Promise<MeDto> {
+    return this.request('/api/me', meSchema);
   }
 
   home(workDate: string): Promise<WorkerHomeDto> {

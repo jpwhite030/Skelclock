@@ -1,5 +1,7 @@
 /**
- * The supervisor's crew sheet.
+ * The supervisor's crew sheet, drawn in the same paper hand as the clock
+ * screen — square corners, ink rules, the CAD legend (green = on and sent,
+ * yellow = in hand, magenta = crossed a line).
  *
  * One tap clocks the whole crew on or off; unticking a member means "not
  * here today" and leaves them alone. Every member still gets their own
@@ -24,8 +26,8 @@ import {
 import { ApiClient, type CrewDto, type JobOption } from '../src/api';
 import { captureFix } from '../src/location';
 import { deviceId } from '../src/device';
-import { accessToken } from '../src/supabase';
-import { colors, radius, spacing, type, MIN_TAP } from '../src/theme';
+import { accessToken } from '../src/auth';
+import { colors, r, type as t, MIN_TAP } from '../src/theme';
 
 const api = new ApiClient(accessToken);
 
@@ -115,7 +117,7 @@ export default function CrewScreen() {
   if (loading) {
     return (
       <View style={[styles.screen, styles.centre]}>
-        <ActivityIndicator color={colors.text} size="large" />
+        <ActivityIndicator color={colors.ink} size="large" />
       </View>
     );
   }
@@ -127,23 +129,22 @@ export default function CrewScreen() {
       style={styles.screen}
       contentContainerStyle={styles.content}
       refreshControl={
-        <RefreshControl refreshing={false} onRefresh={() => void load()} tintColor={colors.textMuted} />
+        <RefreshControl refreshing={false} onRefresh={() => void load()} tintColor={colors.inkFaint} />
       }
     >
       {error && <Text style={styles.error}>{error}</Text>}
 
       {crews && crews.length === 0 && (
-        <View style={styles.card}>
-          <Text style={styles.muted}>
+        <View style={styles.block}>
+          <Text style={styles.lead}>
             No crews are set up with you as supervisor. Ask the office to assign one.
           </Text>
         </View>
       )}
 
       {crews && crews.length > 1 && (
-        <View style={styles.card}>
-          <Text style={styles.label}>CREW</Text>
-          <View style={styles.chips}>
+        <Section label="Crew">
+          <View style={styles.cells}>
             {crews.map((c) => (
               <Chip
                 key={c.id}
@@ -157,16 +158,13 @@ export default function CrewScreen() {
               />
             ))}
           </View>
-        </View>
+        </Section>
       )}
 
       {crew && (
         <>
-          <View style={styles.card}>
-            <Text style={styles.label}>
-              {crew.name.toUpperCase()} — {included.length} OF {crew.members.length} IN
-            </Text>
-            <Text style={styles.muted}>Untick anyone who isn&apos;t here today.</Text>
+          <Section label={`${crew.name} — ${included.length} of ${crew.members.length} in`}>
+            <Text style={styles.dat}>Untick anyone who isn&apos;t here today.</Text>
             {crew.members.map((m) => {
               const out = excluded.has(m.employeeId);
               return (
@@ -181,8 +179,10 @@ export default function CrewScreen() {
                     {!out && <Text style={styles.tickMark}>✓</Text>}
                   </View>
                   <View style={styles.memberText}>
-                    <Text style={[styles.body, out && styles.bodyOut]}>{m.fullName}</Text>
-                    <Text style={styles.muted}>
+                    <Text style={[styles.memberName, out && styles.memberNameOut]}>
+                      {m.fullName}
+                    </Text>
+                    <Text style={[styles.dat, { color: memberStateInk(m.clockState) }]}>
                       {m.clockState === 'off'
                         ? 'Not clocked on'
                         : m.clockState === 'on_break'
@@ -193,27 +193,28 @@ export default function CrewScreen() {
                 </Pressable>
               );
             })}
-          </View>
+          </Section>
 
-          <View style={styles.card}>
-            <Text style={styles.label}>JOB FOR CLOCK-ON</Text>
-            {jobs.length === 0 && (
-              <Text style={styles.muted}>No jobs available — clock-on will record no job.</Text>
+          <Section label="Job for clock-on">
+            {jobs.length === 0 ? (
+              <Text style={styles.dat}>No jobs available — clock-on will record no job.</Text>
+            ) : (
+              <View style={styles.cells}>
+                {jobs.map((j) => (
+                  <Chip
+                    key={j.id}
+                    label={`Job ${j.jobNumber}`}
+                    selected={j.id === jobId}
+                    onPress={() => setJobId(j.id)}
+                  />
+                ))}
+              </View>
             )}
-            <View style={styles.chips}>
-              {jobs.map((j) => (
-                <Chip
-                  key={j.id}
-                  label={`Job ${j.jobNumber}`}
-                  selected={j.id === jobId}
-                  onPress={() => setJobId(j.id)}
-                />
-              ))}
-            </View>
-          </View>
+          </Section>
 
           <Pressable
             accessibilityRole="button"
+            accessibilityState={{ disabled: busy || included.length === 0 }}
             disabled={busy || included.length === 0}
             onPress={() =>
               Alert.alert(
@@ -226,20 +227,16 @@ export default function CrewScreen() {
               )
             }
             style={({ pressed }) => [
-              styles.bigButton,
-              {
-                backgroundColor: pressed ? colors.onPressed : colors.on,
-                opacity: busy || included.length === 0 ? 0.6 : 1,
-              },
+              styles.band,
+              { backgroundColor: colors.green, opacity: busy || included.length === 0 ? 0.45 : pressed ? 0.86 : 1 },
             ]}
           >
-            <Text style={styles.bigButtonText}>
-              {busy ? 'WORKING…' : `CLOCK ${included.length} ON`}
-            </Text>
+            <Text style={styles.bandText}>{busy ? 'WORKING' : `CLOCK ${included.length} ON`}</Text>
           </Pressable>
 
           <Pressable
             accessibilityRole="button"
+            accessibilityState={{ disabled: busy || included.length === 0 }}
             disabled={busy || included.length === 0}
             onPress={() =>
               Alert.alert(`Clock ${included.length} off?`, 'Ends the shift for everyone ticked.', [
@@ -248,40 +245,43 @@ export default function CrewScreen() {
               ])
             }
             style={({ pressed }) => [
-              styles.bigButton,
-              {
-                backgroundColor: pressed ? colors.offPressed : colors.off,
-                opacity: busy || included.length === 0 ? 0.6 : 1,
-              },
+              styles.band,
+              { backgroundColor: colors.ink, opacity: busy || included.length === 0 ? 0.45 : pressed ? 0.86 : 1 },
             ]}
           >
-            <Text style={styles.bigButtonText}>
-              {busy ? 'WORKING…' : `CLOCK ${included.length} OFF`}
-            </Text>
+            <Text style={styles.bandText}>{busy ? 'WORKING' : `CLOCK ${included.length} OFF`}</Text>
           </Pressable>
 
           {outcomes && (
-            <View style={styles.card}>
-              <Text style={styles.label}>RESULT</Text>
+            <Section label="Result">
               {outcomes.map((o) => (
                 <View key={o.employeeName} style={styles.outcomeRow}>
-                  <Text style={styles.body}>{o.employeeName}</Text>
+                  <Text style={styles.dat}>{o.employeeName}</Text>
                   <Text
                     style={[
-                      styles.muted,
-                      o.status === 'rejected' && { color: colors.error },
-                      o.status === 'created' && { color: colors.ok },
+                      styles.dat,
+                      o.status === 'rejected' && { color: colors.magenta },
+                      o.status === 'created' && { color: colors.green },
                     ]}
                   >
                     {o.status === 'created' ? 'Done' : o.status === 'duplicate' ? 'Already done' : (o.message ?? 'Refused')}
                   </Text>
                 </View>
               ))}
-            </View>
+            </Section>
           )}
         </>
       )}
     </ScrollView>
+  );
+}
+
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.lbl}>{label}</Text>
+      {children}
+    </View>
   );
 }
 
@@ -299,78 +299,74 @@ function Chip({
       accessibilityRole="button"
       accessibilityState={{ selected }}
       onPress={onPress}
-      style={[styles.chip, selected && styles.chipSelected]}
+      style={[styles.chip, selected && styles.chipOn]}
     >
-      <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{label}</Text>
+      <Text style={[styles.chipText, selected && styles.chipTextOn]}>{label}</Text>
     </Pressable>
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
-  centre: { alignItems: 'center', justifyContent: 'center' },
-  content: { padding: spacing.md, gap: spacing.md },
+const memberStateInk = (state: string): string =>
+  state === 'working' ? colors.green : state === 'on_break' ? colors.yellow : colors.inkFaint;
 
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.md,
-    gap: spacing.sm,
-  },
-  label: { ...type.label, color: colors.textMuted },
-  body: { ...type.body, color: colors.text },
-  bodyOut: { color: colors.textMuted, textDecorationLine: 'line-through' },
-  muted: { ...type.body, color: colors.textMuted },
-  error: { ...type.body, color: colors.error },
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: colors.paper },
+  centre: { alignItems: 'center', justifyContent: 'center' },
+  content: { paddingHorizontal: r.r2, paddingVertical: r.r2, gap: r.r2 },
+
+  error: { ...t.dat, color: colors.magenta },
+
+  block: { paddingVertical: r.r4, gap: r.r8 },
+  lead: { ...t.lead, color: colors.ink700 },
+  lbl: { ...t.lbl, color: colors.inkFaint, marginBottom: r.r8 },
+  dat: { ...t.dat, color: colors.inkFaint },
+
+  section: { gap: r.r8, paddingTop: r.r4, borderTopWidth: 1, borderTopColor: colors.line },
 
   memberRow: {
     minHeight: MIN_TAP,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.md,
+    gap: r.r4,
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
   },
   memberText: { flex: 1, gap: 2 },
+  memberName: { ...t.dat, fontSize: 15, color: colors.ink },
+  memberNameOut: { color: colors.inkFaint, textDecorationLine: 'line-through' },
   tick: {
-    width: 28,
-    height: 28,
-    borderRadius: radius.sm,
-    borderWidth: 2,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tickOn: { borderColor: colors.on, backgroundColor: colors.on },
-  tickMark: { color: '#fff', fontWeight: '700' },
-
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  chip: {
-    minHeight: MIN_TAP - 16,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.pill,
-    backgroundColor: colors.surfaceRaised,
+    width: 24,
+    height: 24,
     borderWidth: 1,
-    borderColor: colors.border,
-  },
-  chipSelected: { backgroundColor: colors.on, borderColor: colors.on },
-  chipText: { ...type.body, color: colors.text },
-  chipTextSelected: { color: '#fff', fontWeight: '700' },
-
-  bigButton: {
-    minHeight: 88,
-    borderRadius: radius.lg,
+    borderColor: colors.ink,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  bigButtonText: { fontSize: 24, fontWeight: '800', color: '#fff', letterSpacing: 1.5 },
+  tickOn: { backgroundColor: colors.green, borderColor: colors.green },
+  tickMark: { color: colors.paper, fontWeight: '700' },
+
+  cells: { flexDirection: 'row', flexWrap: 'wrap', gap: r.r8 },
+  chip: {
+    minHeight: MIN_TAP - 12,
+    justifyContent: 'center',
+    paddingHorizontal: r.r4,
+    borderWidth: 1,
+    borderColor: colors.line,
+  },
+  chipOn: { borderColor: colors.yellow, backgroundColor: colors.fillYellow },
+  chipText: { ...t.dat, color: colors.ink700 },
+  chipTextOn: { color: colors.yellow },
+
+  band: { height: r.r3 * 0.66, alignItems: 'center', justifyContent: 'center' },
+  bandText: { ...t.act, fontSize: 22, letterSpacing: 2.5, color: colors.paper },
 
   outcomeRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: spacing.xs,
-    gap: spacing.md,
+    paddingVertical: r.r8,
+    gap: r.r4,
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
   },
 });

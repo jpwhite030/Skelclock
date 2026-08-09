@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  bearingDegrees,
+  blocksClockIn,
   distanceMetres,
   evaluateGeofence,
   shouldAutoConfirmGeofence,
@@ -69,6 +71,117 @@ test('distanceMetres matches a known Sydney baseline', () => {
 test('distanceMetres is zero for identical points', () => {
   const p = { latitude: -33.8, longitude: 151.2 };
   assert.equal(distanceMetres(p, p), 0);
+});
+
+test('bearingDegrees points to the four cardinals', () => {
+  const site = { latitude: -34.4248, longitude: 150.8931 }; // 14 Kembla Street
+
+  const north = bearingDegrees(site, { ...site, latitude: site.latitude + 0.01 });
+  const south = bearingDegrees(site, { ...site, latitude: site.latitude - 0.01 });
+  const east = bearingDegrees(site, { ...site, longitude: site.longitude + 0.01 });
+  const west = bearingDegrees(site, { ...site, longitude: site.longitude - 0.01 });
+
+  assert.ok(Math.abs(north - 0) < 1, `north was ${north.toFixed(1)}`);
+  assert.ok(Math.abs(south - 180) < 1, `south was ${south.toFixed(1)}`);
+  assert.ok(Math.abs(east - 90) < 1, `east was ${east.toFixed(1)}`);
+  assert.ok(Math.abs(west - 270) < 1, `west was ${west.toFixed(1)}`);
+});
+
+test('bearingDegrees is a compass bearing, not a flat arctangent', () => {
+  // Equal degree steps north and east. On a square lat/lng grid this would be
+  // exactly 45°; the real forward azimuth is east of that, because a degree of
+  // longitude is shorter than a degree of latitude this far south.
+  const site = { latitude: -34.4248, longitude: 150.8931 };
+  const b = bearingDegrees(site, {
+    latitude: site.latitude + 0.01,
+    longitude: site.longitude + 0.01,
+  });
+
+  assert.ok(b > 39 && b < 40, `expected ~39.5°, got ${b.toFixed(2)}°`);
+});
+
+test('bearingDegrees returns 0 for identical points rather than NaN', () => {
+  const p = { latitude: -34.4248, longitude: 150.8931 };
+  assert.equal(bearingDegrees(p, p), 0);
+});
+
+// --- the fence as a hard block -----------------------------------------------
+//
+// These guard the cases where refusing a clock-on would cost a worker a shift
+// for something that is not their fault. The positive case is one test; the
+// rest are all the ways someone must still get to work.
+
+const site = { latitude: -34.4248, longitude: 150.8931 };
+const fenceM = 200;
+
+/** Roughly `metres` due north of the site. 1 degree of latitude ~ 111,320m. */
+const northOf = (metres: number) => ({
+  latitude: site.latitude + metres / 111_320,
+  longitude: site.longitude,
+});
+
+test('blocksClockIn refuses a position confidently outside the fence', () => {
+  const result = evaluateGeofence({
+    position: northOf(600),
+    accuracyM: 10,
+    site,
+    radiusM: fenceM,
+  });
+
+  assert.equal(result.insideGeofence, false);
+  assert.equal(blocksClockIn(result), true);
+});
+
+test('blocksClockIn allows a worker inside the fence', () => {
+  const result = evaluateGeofence({
+    position: northOf(50),
+    accuracyM: 10,
+    site,
+    radiusM: fenceM,
+  });
+
+  assert.equal(blocksClockIn(result), false);
+});
+
+test('blocksClockIn does not refuse when there is no position at all', () => {
+  // A basement, a shed, a flat GPS, a refused permission. Unknown is not
+  // outside, and must never cost somebody a shift.
+  const result = evaluateGeofence({
+    position: null,
+    accuracyM: null,
+    site,
+    radiusM: fenceM,
+  });
+
+  assert.equal(result.insideGeofence, null);
+  assert.equal(blocksClockIn(result), false);
+});
+
+test('blocksClockIn does not refuse when the site has no coordinates yet', () => {
+  const result = evaluateGeofence({
+    position: northOf(5000),
+    accuracyM: 10,
+    site: null,
+    radiusM: fenceM,
+  });
+
+  assert.equal(result.insideGeofence, null);
+  assert.equal(blocksClockIn(result), false);
+});
+
+test('blocksClockIn does not refuse when GPS error bars reach the fence', () => {
+  // 260m out with 100m of error: the worker may well be standing inside it.
+  // This is the ordinary case on a scaffold deck, not an edge case.
+  const result = evaluateGeofence({
+    position: northOf(260),
+    accuracyM: 100,
+    site,
+    radiusM: fenceM,
+  });
+
+  assert.equal(result.insideGeofence, false);
+  assert.equal(result.withinAccuracyMargin, true);
+  assert.equal(blocksClockIn(result), false);
 });
 
 test('a worker standing on site is inside the fence', () => {

@@ -23,6 +23,7 @@ import Constants from 'expo-constants';
 import {
   allowedEvents,
   applyTransition,
+  blocksClockIn,
   evaluateGeofence,
   isWithinOperatingHours,
   minutesSinceLocalMidnight,
@@ -39,7 +40,8 @@ import {
   type PendingSuggestionDto,
   type WorkerHomeDto,
 } from './api';
-import { captureFix, describeProblem, type Fix } from './location';
+import { captureFix, describeProblem, watchPosition, type Fix } from './location';
+import * as tracking from './tracking';
 import { deviceId } from './device';
 import {
   checkPermissionHealth,
@@ -50,7 +52,7 @@ import {
 } from './geofence';
 import { EventQueue, type QueuedEvent } from './queue';
 import { SqliteQueueStore } from './sqlite-store';
-import { accessToken } from './supabase';
+import { accessToken } from './auth';
 
 export interface ClockScreenState {
   loading: boolean;
@@ -72,6 +74,15 @@ export interface ClockScreenState {
   autoDetectTruncated: boolean;
   /** Geofence-raised events waiting on this worker to confirm or dismiss. */
   suggestions: PendingSuggestionDto[];
+  /**
+   * The last position fix, kept only so the site plan has something to draw.
+   *
+   * This is a record of a fix already taken for another reason — a clock event,
+   * or the worker asking outright — never a reason to take one. Nothing here
+   * polls, and it is deliberately dropped on sign-out with the rest of state.
+   */
+  lastFix: Fix | null;
+  lastFixAt: string | null;
 }
 
 export interface PressOptions {
@@ -83,6 +94,20 @@ export interface PressOptions {
 
 export interface GeofencePrompt {
   distanceM: number;
+  siteName: string | null;
+}
+
+export interface GeofenceCheck {
+  fix: Fix;
+  /** Set when the worker is off-site and should be told before proceeding. */
+  prompt: GeofencePrompt | null;
+  /**
+   * True only when we are confident the worker is beyond the fence. Never set
+   * by a missing fix, a site with no coordinates, or GPS whose error bars
+   * reach the boundary — see blocksClockIn() in @skelclock/core.
+   */
+  blocked: boolean;
+  distanceM: number | null;
   siteName: string | null;
 }
 
@@ -104,6 +129,8 @@ export function useClock(employeeId: string | null) {
     permissionHealth: 'disabled',
     autoDetectTruncated: false,
     suggestions: [],
+    lastFix: null,
+    lastFixAt: null,
   });
 
   const queueRef = useRef<EventQueue | null>(null);
@@ -143,6 +170,47 @@ export function useClock(employeeId: string | null) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employeeId]);
+
+  /**
+   * Follow the worker for the length of the shift, and only the shift.
+   *
+   * Keyed on clockState, so every way of leaving the clocked-on state stops
+   * tracking — a clock-off, a correction from the office, a refresh that says
+   * the shift ended. Sign-out is handled in auth.ts for the same reason: there
+   * must be no route out of "on shift" that leaves the watcher running.
+   */
+  useEffect(() => {
+    const onShift = state.clockState === 'working' || state.clockState === 'on_break';
+
+    if (!onShift) {
+      void tracking.stop();
+      return;
+    }
+
+    let cancelled = false;
+    let stopWatching: (() => void) | undefined;
+
+    void tracking.start();
+    void watchPosition((fix) => tracking.reportForegroundFix(fix)).then((stop) => {
+      if (cancelled) stop();
+      else stopWatching = stop;
+    });
+
+    return () => {
+      cancelled = true;
+      stopWatching?.();
+    };
+  }, [state.clockState]);
+
+  // Positions from either source — the foreground watcher or the background
+  // task — arrive here and drive the map.
+  useEffect(
+    () =>
+      tracking.onPosition((fix, at) =>
+        setState((s) => ({ ...s, lastFix: fix, lastFixAt: at })),
+      ),
+    [],
+  );
 
   // Reception coming back is the moment the backlog should go.
   useEffect(() => {
@@ -276,9 +344,15 @@ export function useClock(employeeId: string | null) {
    * exception, exactly as the brief requires.
    */
   const checkGeofence = useCallback(
-    async (jobId: string | null): Promise<{ fix: Fix; prompt: GeofencePrompt | null }> => {
+    async (jobId: string | null): Promise<GeofenceCheck> => {
       const fix = await captureFix();
       const job = state.jobs.find((j) => j.id === jobId) ?? null;
+
+      // Remembered for the site plan. The fix has already been taken by the
+      // time we get here; keeping it costs nothing and saves taking another.
+      if (fix.latitude != null && fix.longitude != null) {
+        setState((s) => ({ ...s, lastFix: fix, lastFixAt: new Date().toISOString() }));
+      }
 
       const verdict = evaluateGeofence({
         position:
@@ -303,6 +377,12 @@ export function useClock(employeeId: string | null) {
         prompt: needsReason
           ? { distanceM: Math.round(verdict.distanceM ?? 0), siteName: job?.siteName ?? null }
           : null,
+        // Decided here rather than in the screen: whether someone may start
+        // work is not a presentation concern, and the rule lives in core where
+        // it is tested.
+        blocked: blocksClockIn(verdict),
+        distanceM: verdict.distanceM,
+        siteName: job?.siteName ?? null,
       };
     },
     [state.jobs],

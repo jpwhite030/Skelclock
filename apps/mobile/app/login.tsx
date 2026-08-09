@@ -1,8 +1,22 @@
 /**
- * Mobile number + one-time code login.
+ * Sign in.
  *
- * Two screens' worth of interaction, deliberately: number, then code. Nothing
- * to choose, nothing to remember, no password to reset on a Monday morning.
+ * Two paths, and which one shows depends on how the build is configured:
+ *
+ *   Demo    Tap your name. No number to type, no code to wait for. There was
+ *           never an SMS behind either of those in a demo build — the code
+ *           screen was theatre — and asking a scaffolder to key in a phone
+ *           number to open a test build is an obstacle that buys nothing.
+ *
+ *   Real    Mobile number, then a one-time code. Nothing to choose, nothing to
+ *           remember, no password to reset on a Monday morning. Kept intact
+ *           and untouched: on a build with a real Supabase project, identity
+ *           has to be something a worker proves, not something they pick off a
+ *           list.
+ *
+ * The layout is the title block off a drawing sheet — a ruled frame, a rule
+ * under every field, and the sheet's own name in the corner. Nothing here is a
+ * rounded card, because a drawing does not have any.
  */
 
 import { useState } from 'react';
@@ -11,21 +25,48 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { sendOtp, verifyOtp, toE164 } from '../src/supabase';
-import { colors, radius, spacing, type, MIN_TAP } from '../src/theme';
+import {
+  sendOtp,
+  verifyOtp,
+  signInAsDemoWorker,
+  toE164,
+  IS_DEMO,
+  DEMO_NUMBERS,
+} from '../src/auth';
+import { colors, r, type as t, MIN_TAP } from '../src/theme';
 
 export default function LoginScreen() {
   const [phase, setPhase] = useState<'phone' | 'code'>('phone');
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const insets = useSafeAreaInsets();
+
+  const pickWorker = async (mobile: string): Promise<void> => {
+    if (busy) return;
+    setBusy(true);
+    setPending(mobile);
+    setError(null);
+    try {
+      await signInAsDemoWorker(mobile);
+      // The root layout notices the session and routes onward.
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not sign in. Try again.');
+    } finally {
+      setBusy(false);
+      setPending(null);
+    }
+  };
 
   const requestCode = async (): Promise<void> => {
     setBusy(true);
@@ -49,9 +90,10 @@ export default function LoginScreen() {
     setError(null);
     try {
       await verifyOtp(phone, code);
-      // The root layout notices the session and routes onward.
-    } catch {
-      setError('That code did not work. Check it and try again.');
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : 'That code did not work. Check it and try again.',
+      );
     } finally {
       setBusy(false);
     }
@@ -62,29 +104,95 @@ export default function LoginScreen() {
       style={styles.screen}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <View style={styles.inner}>
-        <Text style={styles.brand}>SkelClock</Text>
-        <Text style={styles.muted}>SkelScaff site attendance</Text>
+      <ScrollView
+        contentContainerStyle={[
+          styles.inner,
+          { paddingTop: insets.top + r.r2, paddingBottom: insets.bottom + r.r2 },
+        ]}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* Title block. The sheet knows what it is and who drew it. */}
+        <View style={styles.titleBlock}>
+          <Text style={styles.wordmark}>SKELCLOCK</Text>
+          <View style={styles.ruleHeavy} />
+          <View style={styles.titleRow}>
+            <Text style={styles.lbl}>SkelScaff</Text>
+            <Text style={styles.lbl}>Site attendance</Text>
+          </View>
+        </View>
 
-        {phase === 'phone' ? (
+        {IS_DEMO ? (
           <>
-            <Text style={styles.label}>YOUR MOBILE NUMBER</Text>
-            <TextInput
-              style={styles.input}
-              value={phone}
-              onChangeText={setPhone}
-              placeholder="0412 345 678"
-              placeholderTextColor={colors.textMuted}
-              keyboardType="phone-pad"
-              autoComplete="tel"
-              textContentType="telephoneNumber"
-              autoFocus
-              editable={!busy}
-            />
-            {phone.length >= 9 && (
-              <Text style={styles.muted}>We'll text a code to {toE164(phone)}</Text>
+            {/* A crew schedule, with the column heads a schedule has. */}
+            <View style={styles.scheduleHead}>
+              <Text style={styles.lbl}>Employee</Text>
+              <Text style={styles.lbl}>Crew</Text>
+            </View>
+
+            <View style={styles.schedule}>
+              {DEMO_NUMBERS.map((worker) => {
+                const signingIn = pending === worker.mobile;
+                return (
+                  <Pressable
+                    key={worker.mobile}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Sign in as ${worker.name}, ${worker.number}`}
+                    accessibilityState={{ disabled: busy }}
+                    disabled={busy}
+                    onPress={() => void pickWorker(worker.mobile)}
+                    style={({ pressed }) => [
+                      styles.scheduleRow,
+                      pressed && styles.rowPressed,
+                      signingIn && styles.rowActive,
+                      busy && !signingIn && styles.rowDimmed,
+                    ]}
+                  >
+                    <View style={styles.rowMain}>
+                      <Text style={styles.rowNumber}>{worker.number}</Text>
+                      <Text style={styles.rowName} numberOfLines={1}>
+                        {worker.name}
+                      </Text>
+                    </View>
+                    {signingIn ? (
+                      <ActivityIndicator size="small" color={colors.green} />
+                    ) : (
+                      <Text style={styles.rowCrew}>{worker.crew}</Text>
+                    )}
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <View style={styles.hazard}>
+              <Text style={[styles.lbl, styles.hazardTitle]}>Demo build</Text>
+              <Text style={styles.lead}>
+                This build has no Supabase project behind it, so anyone can sign in as
+                anyone. It is for trying the app out, not for recording real hours.
+              </Text>
+            </View>
+          </>
+        ) : phase === 'phone' ? (
+          <>
+            <Field label="Your mobile number">
+              <TextInput
+                style={styles.input}
+                value={phone}
+                onChangeText={setPhone}
+                placeholder="0412 345 678"
+                placeholderTextColor={colors.inkFaint}
+                keyboardType="phone-pad"
+                autoComplete="tel"
+                textContentType="telephoneNumber"
+                autoFocus
+                editable={!busy}
+              />
+            </Field>
+
+            {phone.replace(/\D/g, '').length >= 9 && (
+              <Text style={styles.dat}>Code goes to {toE164(phone)}</Text>
             )}
-            <PrimaryButton
+
+            <Action
               label="Send me a code"
               busy={busy}
               disabled={phone.replace(/\D/g, '').length < 9}
@@ -93,26 +201,29 @@ export default function LoginScreen() {
           </>
         ) : (
           <>
-            <Text style={styles.label}>ENTER THE 6 DIGIT CODE</Text>
-            <TextInput
-              style={[styles.input, styles.codeInput]}
-              value={code}
-              onChangeText={setCode}
-              placeholder="000000"
-              placeholderTextColor={colors.textMuted}
-              keyboardType="number-pad"
-              autoComplete="sms-otp"
-              textContentType="oneTimeCode"
-              maxLength={6}
-              autoFocus
-              editable={!busy}
-            />
-            <PrimaryButton
+            <Field label="Enter the 6 digit code">
+              <TextInput
+                style={[styles.input, styles.codeInput]}
+                value={code}
+                onChangeText={setCode}
+                placeholder="000000"
+                placeholderTextColor={colors.inkFaint}
+                keyboardType="number-pad"
+                autoComplete="sms-otp"
+                textContentType="oneTimeCode"
+                maxLength={6}
+                autoFocus
+                editable={!busy}
+              />
+            </Field>
+
+            <Action
               label="Sign in"
               busy={busy}
               disabled={code.length < 6}
               onPress={() => void submitCode()}
             />
+
             <Pressable
               style={styles.link}
               onPress={() => {
@@ -126,18 +237,36 @@ export default function LoginScreen() {
           </>
         )}
 
-        {error && <Text style={styles.error}>{error}</Text>}
+        {error && (
+          <View style={styles.error}>
+            <Text style={[styles.lbl, styles.errorTitle]}>Not signed in</Text>
+            <Text style={styles.lead}>{error}</Text>
+          </View>
+        )}
 
-        <Text style={styles.footnote}>
-          Trouble signing in? Your number has to match the one in the office system — ask
-          your supervisor to check it.
-        </Text>
-      </View>
+        {!IS_DEMO && (
+          <Text style={styles.footnote}>
+            Your number has to match the one in the office system. If it does not, ask
+            your supervisor to check it against Odoo.
+          </Text>
+        )}
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
-function PrimaryButton({
+/** A ruled field: label above, rule below. The drawing's own form. */
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <View style={styles.field}>
+      <Text style={styles.lbl}>{label}</Text>
+      {children}
+      <View style={styles.rule} />
+    </View>
+  );
+}
+
+function Action({
   label,
   busy,
   disabled,
@@ -151,46 +280,121 @@ function PrimaryButton({
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={{ disabled: busy || disabled }}
       disabled={busy || disabled}
       onPress={onPress}
       style={({ pressed }) => [
-        styles.button,
-        { opacity: busy || disabled ? 0.5 : pressed ? 0.85 : 1 },
+        styles.action,
+        disabled && styles.actionOff,
+        pressed && styles.actionPressed,
       ]}
     >
-      {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>{label}</Text>}
+      {busy ? (
+        <ActivityIndicator color={colors.paper} />
+      ) : (
+        <Text style={[styles.actionText, disabled && styles.actionTextOff]}>{label}</Text>
+      )}
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg, justifyContent: 'center' },
-  inner: { padding: spacing.lg, gap: spacing.md },
-  brand: { fontSize: 40, fontWeight: '800', color: colors.text },
-  muted: { ...type.body, color: colors.textMuted },
-  label: { ...type.label, color: colors.textMuted, marginTop: spacing.md },
-  input: {
-    minHeight: MIN_TAP + 8,
-    borderRadius: radius.md,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: spacing.md,
-    fontSize: 22,
-    color: colors.text,
+  screen: { flex: 1, backgroundColor: colors.paper },
+  inner: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingHorizontal: r.r2,
+    gap: r.r2,
   },
-  codeInput: { letterSpacing: 12, textAlign: 'center', fontSize: 28 },
-  button: {
-    minHeight: MIN_TAP + 12,
-    borderRadius: radius.md,
-    backgroundColor: colors.on,
+
+  /* ── title block ─────────────────────────────────────────────────────── */
+  titleBlock: { gap: r.r8 },
+  wordmark: { ...t.fig, fontSize: 52, lineHeight: 54, color: colors.ink },
+  titleRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  ruleHeavy: { height: 2, backgroundColor: colors.ink, marginVertical: r.r8 },
+  rule: { height: 1, backgroundColor: colors.line },
+
+  lbl: { ...t.lbl, color: colors.inkFaint },
+  lead: { ...t.lead, color: colors.ink700 },
+  dat: { ...t.dat, color: colors.inkFaint },
+
+  /* ── fields ──────────────────────────────────────────────────────────── */
+  field: { gap: r.r8 },
+  // Mono, not the display face: a phone number and a one-time code are data,
+  // and data is mono. It also stops the digits shuffling sideways as they are
+  // typed, which a proportional face does and which reads as a glitch when you
+  // are checking a number against the one on your own handset.
+  input: {
+    minHeight: MIN_TAP,
+    ...t.dat,
+    fontSize: 24,
+    lineHeight: 30,
+    color: colors.ink,
+    paddingVertical: r.r8,
+  },
+  codeInput: { letterSpacing: 14, textAlign: 'center' },
+
+  /* ── the one action ──────────────────────────────────────────────────── */
+  action: {
+    minHeight: MIN_TAP,
+    backgroundColor: colors.ink,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: spacing.sm,
   },
-  buttonText: { ...type.heading, color: '#fff', letterSpacing: 0.5 },
+  actionPressed: { backgroundColor: colors.ink700 },
+  actionOff: { backgroundColor: colors.paper200 },
+  actionText: { ...t.act, color: colors.paper },
+  actionTextOff: { color: colors.inkFaint },
+
+  /* ── the crew, drawn as a schedule ───────────────────────────────────── */
+  scheduleHead: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingBottom: r.r8,
+  },
+  schedule: { borderTopWidth: 2, borderTopColor: colors.ink },
+  scheduleRow: {
+    // 1.5 rosettes: the gloved-thumb floor, same as every other tap target.
+    minHeight: MIN_TAP,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: r.r4,
+    paddingHorizontal: r.r8,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line,
+  },
+  rowPressed: { backgroundColor: colors.fillYellow },
+  // Green while signing in: boards down, this one is going through.
+  rowActive: { backgroundColor: colors.fillGreen },
+  rowDimmed: { opacity: 0.3 },
+  rowMain: { flexDirection: 'row', alignItems: 'baseline', gap: r.r4, flexShrink: 1 },
+  // The employee number leads, monospaced and fixed-width, so the names line
+  // up in a column the way a printed crew list does.
+  rowNumber: { ...t.dat, color: colors.inkFaint, width: 68 },
+  rowName: { ...t.dat, fontSize: 17, color: colors.ink, flexShrink: 1 },
+  rowCrew: { ...t.dat, color: colors.ink700 },
+
   link: { minHeight: MIN_TAP, alignItems: 'center', justifyContent: 'center' },
-  linkText: { ...type.body, color: colors.textMuted, textDecorationLine: 'underline' },
-  error: { ...type.body, color: colors.error },
-  footnote: { ...type.body, color: colors.textMuted, fontSize: 14, marginTop: spacing.lg },
+  linkText: { ...t.dat, color: colors.ink700, textDecorationLine: 'underline' },
+
+  /* ── banded notices. Magenta has crossed a line; yellow is in hand. ──── */
+  hazard: {
+    backgroundColor: colors.fillYellow,
+    borderLeftWidth: r.r8,
+    borderLeftColor: colors.yellow,
+    padding: r.r4,
+    gap: r.r8,
+  },
+  hazardTitle: { color: colors.yellow },
+  error: {
+    backgroundColor: colors.fillMagenta,
+    borderLeftWidth: r.r8,
+    borderLeftColor: colors.magenta,
+    padding: r.r4,
+    gap: r.r8,
+  },
+  errorTitle: { color: colors.magenta },
+
+  footnote: { ...t.lead, fontSize: 14, color: colors.inkFaint },
 });

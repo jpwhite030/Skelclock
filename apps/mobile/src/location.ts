@@ -1,10 +1,23 @@
 /**
  * Location capture.
  *
- * Bound tightly by the privacy requirements: a fix is taken at the moment of a
- * clock event and at no other time. There is no background location task, no
- * watcher, and nothing that keeps running after clock-out — the only API used
- * here is a one-shot `getCurrentPositionAsync`.
+ * Two modes, and the difference matters enough to be stated plainly.
+ *
+ *   captureFix()     One shot, at the moment of a clock event. Never blocks
+ *                    indefinitely, never throws, and a refusal or a timeout
+ *                    comes back as a Fix with `problem` set.
+ *
+ *   watchPosition()  Continuous, for the live map and the fence check. Runs
+ *                    only while the worker is clocked on, and is stopped on
+ *                    clock-out and on sign-out — see tracking.ts, which owns
+ *                    the background half and the start/stop rules.
+ *
+ * This module used to promise that a fix was taken at a clock event "and at no
+ * other time", with no watcher and nothing running in the background. That is
+ * no longer true: SkelClock now follows a worker for the length of their
+ * shift. That is a materially different thing for someone to agree to, so it
+ * is said outright here, in the permission strings in app.json, and in the
+ * privacy section on the clock screen — not softened in any of the three.
  */
 
 import * as Location from 'expo-location';
@@ -77,6 +90,52 @@ export async function captureFix(): Promise<Fix> {
     return { ...NO_FIX, problem: 'timeout' };
   }
 }
+
+/**
+ * Follow the worker's position until the returned function is called.
+ *
+ * Foreground only — this stops when iOS suspends the app. tracking.ts pairs it
+ * with a background task so a shift stays covered when the phone is pocketed.
+ *
+ * Distance-filtered rather than time-filtered: a scaffolder standing still on a
+ * deck should not burn battery reporting the same metre over and over, and the
+ * map has nothing to redraw until they actually move.
+ */
+export async function watchPosition(
+  onFix: (fix: Fix) => void,
+): Promise<() => void> {
+  const { status } = await Location.getForegroundPermissionsAsync();
+  if (status !== 'granted') {
+    const requested = await Location.requestForegroundPermissionsAsync();
+    if (requested.status !== 'granted') {
+      onFix({ ...NO_FIX, problem: 'denied' });
+      return () => undefined;
+    }
+  }
+
+  const subscription = await Location.watchPositionAsync(
+    {
+      accuracy: Location.Accuracy.Balanced,
+      distanceInterval: LIVE_DISTANCE_M,
+      timeInterval: LIVE_INTERVAL_MS,
+    },
+    (position) => {
+      onFix({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracyM: position.coords.accuracy ?? null,
+        problem: null,
+      });
+    },
+  );
+
+  return () => subscription.remove();
+}
+
+/** Metres of movement before a new position is reported. */
+const LIVE_DISTANCE_M = 10;
+/** Floor on how often a position is reported, however fast someone moves. */
+const LIVE_INTERVAL_MS = 5_000;
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
