@@ -16,6 +16,8 @@ import { z } from 'zod';
 
 import {
   activitiesResponseSchema,
+  crewClockResponseSchema,
+  crewsResponseSchema,
   deviceCheckinResponseSchema,
   geofenceConsentResponseSchema,
   ingestResponseSchema,
@@ -25,6 +27,9 @@ import {
   timesheetActionResponseSchema,
   workerHomeSchema,
   type ActivityDto,
+  type CrewClockRequestDto,
+  type CrewClockResponseDto,
+  type CrewDto,
   type DeviceCheckinRequestDto,
   type GeofenceConsentRequestDto,
   type IngestOutcomeDto,
@@ -179,6 +184,18 @@ export class ApiClient implements Transport {
     return this.request(`/api/events/${eventId}/reject`, suggestionActionResponseSchema, {
       method: 'POST',
       body: JSON.stringify({ reason }),
+    });
+  }
+
+  /** The crews this caller may clock (supervisor/admin only — 403 otherwise). */
+  crews(): Promise<CrewDto[]> {
+    return this.request('/api/crew', crewsResponseSchema);
+  }
+
+  clockCrew(input: CrewClockRequestDto): Promise<CrewClockResponseDto> {
+    return this.request('/api/crew/clock', crewClockResponseSchema, {
+      method: 'POST',
+      body: JSON.stringify(input),
     });
   }
 

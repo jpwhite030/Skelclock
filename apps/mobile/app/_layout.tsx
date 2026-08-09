@@ -53,6 +53,7 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen name="index" options={{ title: 'SkelClock' }} />
+        <Stack.Screen name="crew" options={{ title: 'My crew' }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
       </Stack>
     </SafeAreaProvider>

@@ -17,6 +17,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { AttendanceEventType } from '@skelclock/core';
@@ -29,6 +30,7 @@ import { colors, radius, spacing, type, MIN_TAP } from '../src/theme';
 export default function ClockScreen() {
   const [employeeId, setEmployeeId] = useState<string | null>(null);
   const insets = useSafeAreaInsets();
+  const router = useRouter();
 
   useEffect(() => {
     // The app_user row carries the employee link; the JWT only has the auth id.
@@ -293,6 +295,18 @@ export default function ClockScreen() {
           {home && home.autoLunchMinutes > 0 ? ` · ${home.autoLunchMinutes}m lunch auto-deducted` : ''}
         </Text>
       </View>
+
+      {/* Only a supervisor's phone grows a second screen. The crew routes
+          re-check the role server-side; this is wayfinding, not security. */}
+      {home && home.role !== 'worker' && (
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => router.push('/crew')}
+          style={({ pressed }) => [styles.crewLink, pressed && { opacity: 0.8 }]}
+        >
+          <Text style={styles.crewLinkText}>MY CREW — clock the whole crew on or off →</Text>
+        </Pressable>
+      )}
 
       {canClockIn && (
         <BigButton
@@ -628,6 +642,17 @@ const styles = StyleSheet.create({
 
   signOut: { minHeight: MIN_TAP, alignItems: 'center', justifyContent: 'center' },
   signOutText: { ...type.body, color: colors.textMuted },
+
+  crewLink: {
+    minHeight: MIN_TAP,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceRaised,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  crewLinkText: { ...type.label, color: colors.text },
 
   autoDetectRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   autoDetectText: { flex: 1, gap: spacing.xs },

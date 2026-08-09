@@ -17,6 +17,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import * as Application from 'expo-application';
+import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
 
 import {
   allowedEvents,
@@ -475,11 +477,37 @@ function checkinDevice(api: ApiClient, permissionHealth: PermissionHealth): void
         platform: Platform.OS === 'ios' || Platform.OS === 'android' ? Platform.OS : null,
         appVersion: Application.nativeApplicationVersion,
         locationPermission: permissionHealth === 'disabled' ? undefined : permissionHealth === 'ok' ? 'granted' : 'denied',
+        pushToken: await expoPushToken(),
       });
     } catch {
       // Best-effort only - a failed check-in has no effect on the worker's day.
     }
   })();
+}
+
+/**
+ * The Expo push token for this install, or null when notifications are off.
+ *
+ * This is what lets the server's notification sweep (missing clock-out
+ * nudges, stale-suggestion reminders) reach this phone. Null is a fine
+ * answer — the sweep just skips this worker — and the server keeps the last
+ * good token, so one failed read here never un-registers the device.
+ */
+async function expoPushToken(): Promise<string | null> {
+  try {
+    const perms = await Notifications.getPermissionsAsync();
+    if (!perms.granted) return null;
+    const projectId =
+      (Constants.expoConfig?.extra as { eas?: { projectId?: string } } | undefined)?.eas
+        ?.projectId ?? Constants.easConfig?.projectId ?? undefined;
+    const token = await Notifications.getExpoPushTokenAsync(
+      projectId ? { projectId } : undefined,
+    );
+    return token.data;
+  } catch {
+    // No EAS project configured yet (bare dev build) — push simply stays off.
+    return null;
+  }
 }
 
 /** Folds locally-queued events on top of the server's view of the state. */
