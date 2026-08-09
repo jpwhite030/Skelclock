@@ -4,9 +4,14 @@
  * SHT 01's site plan: last clock positions over the site geofences.
  *
  * Honest about what it is — these are positions recorded at clock events,
- * not live tracking; the caption says so. The CAD legend holds: a worker
- * where they should be is unlit steel, a break is yellow, off-site is
- * magenta. Sites are faint circles, the same fences SHT 04 edits.
+ * not live tracking; the caption says so.
+ *
+ * Privacy rule, deliberate and load-bearing: ONLY on-site positions are
+ * ever drawn. A worker who clocked from outside the fence appears in the
+ * table above as a distance ("4.1km away") — never as a point on an aerial
+ * photo, because that point is somebody's driveway, not a work location.
+ * The attendance record itself still carries what the exception process
+ * needs; the map is a picture of the sites, not of the people.
  */
 
 import { MapContainer, TileLayer, Circle, CircleMarker, Tooltip } from 'react-leaflet';
@@ -17,7 +22,6 @@ import type { SiteSummary, WorkingNowRow } from '@skelclock/server';
 
 const STEEL = '#8aaac8';
 const YELLOW = '#ffcf2e';
-const MAGENTA = '#ff3d9a';
 
 const DEFAULT_CENTER: LatLngExpression = [-34.4248, 150.8931]; // Wollongong
 
@@ -29,7 +33,13 @@ export function WorkingMap({
   sites: SiteSummary[];
 }) {
   const placedSites = sites.filter((s) => s.latitude != null && s.longitude != null);
-  const located = rows.filter((r) => r.lastLatitude != null && r.lastLongitude != null);
+  const located = rows.filter(
+    (r) =>
+      r.lastLatitude != null &&
+      r.lastLongitude != null &&
+      // The privacy rule from the header: on-site pins only.
+      r.locationStatus === 'inside',
+  );
 
   const center: LatLngExpression =
     located.length > 0
@@ -59,8 +69,7 @@ export function WorkingMap({
         ))}
 
         {located.map((r) => {
-          const colour =
-            r.locationStatus === 'outside' ? MAGENTA : r.onBreak ? YELLOW : STEEL;
+          const colour = r.onBreak ? YELLOW : STEEL;
           return (
             <CircleMarker
               key={r.employeeId}

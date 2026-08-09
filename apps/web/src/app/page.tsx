@@ -202,12 +202,14 @@ export default async function WorkingNowPage() {
       {/* E. The site plan. Only drawn when there is something to plot — an
              empty aerial photo is decoration, and this screen doesn't carry
              decoration. Positions are clock-event fixes, not tracking, and
-             the caption says exactly that. */}
-      {(rows.some((r) => r.lastLatitude != null) ||
+             on-site pins only: an off-site clock shows in the table as a
+             distance, never as a point on the photo. */}
+      {(rows.some((r) => r.lastLatitude != null && r.locationStatus === 'inside') ||
         sites.some((s) => s.latitude != null)) && (
         <div className="working-map-block">
           <div className="lbl" style={{ padding: 'var(--r-4) 0' }}>
-            Site plan — positions as recorded at each worker&apos;s last clock event
+            Site plan — on-site positions from each worker&apos;s last clock event.
+            Off-site clocks are listed above by distance only.
           </div>
           <WorkingMapLoader rows={rows} sites={sites} />
         </div>

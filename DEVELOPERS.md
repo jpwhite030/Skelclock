@@ -670,19 +670,32 @@ existing Phase-3 tests use 45–60 deliberately.
    raises an exception; it does not refuse. The only hard refusals are the
    two deliberate, human-configured ones: site exclusion and operating hours
    — and operating hours never gates a clock-out.
-5. **The server decides what counts.** Auto-geofence events become payroll
+5. **Location is captured at clock events only, and off-site positions are
+   never plotted.** There is no continuous tracking anywhere in the system —
+   background geofencing wakes the app at fence crossings, nothing more. On
+   a map, only on-site positions are ever drawn; an off-site clock surfaces
+   as a distance ("4.1km away"), because the precise point is somebody's
+   driveway, not a work location. The office sees clearly who is where *on
+   site*; it never gets a picture of anyone's whereabouts off it.
+6. **Workers clock; they never edit.** The only write a worker has is a
+   clock event at the current moment (plus confirming their own day and
+   answering auto-clock suggestions). Correcting, voiding, backdating and
+   adding events live solely on the web timesheet screen, gated by
+   `canManageEmployee` — and `/api/events` clamps a worker's `clockMethod`
+   so they cannot present as a supervisor.
+7. **The server decides what counts.** Auto-geofence events become payroll
    only via the server's auto-confirm rule or the worker's explicit
    confirmation. A client never grants itself a confirmed clock.
-6. **Contracts are validated on both ends.** Never ship a route change
+8. **Contracts are validated on both ends.** Never ship a route change
    without its schema; never bypass `schema.parse` "just this once".
-7. **Role checks live in app code** (`canManageEmployee`), because the web
+9. **Role checks live in app code** (`canManageEmployee`), because the web
    tier bypasses RLS. A supervisor never manages themselves.
-8. **`packages/core` stays pure** — no I/O ever. It must keep running
-   unmodified on the phone.
-9. **Segments and totals are derived, events are truth.** Anything wrong on a
-   timesheet is fixed by fixing events and rebuilding, never by editing
-   totals.
-10. **One paper surface** in the dashboard (Timesheets). Keep new screens on
+10. **`packages/core` stays pure** — no I/O ever. It must keep running
+    unmodified on the phone.
+11. **Segments and totals are derived, events are truth.** Anything wrong on
+    a timesheet is fixed by fixing events and rebuilding, never by editing
+    totals.
+12. **One paper surface** in the dashboard (Timesheets). Keep new screens on
     the dark ground and reuse the existing idioms (`.sht`, `.mk` marks,
     `.setout-counts`, `.spec`).
 
