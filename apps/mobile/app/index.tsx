@@ -446,6 +446,29 @@ export default function ClockScreen() {
           )}
         </View>
 
+        {/*
+          SkelClock is built to run itself: this is the first thing a worker
+          not yet on auto-detect sees, ahead of the manual buttons below,
+          because the manual buttons are the fallback now, not the plan. The
+          consent step it leads to cannot be skipped — background location is
+          an OS-level "Always Allow" permission the worker has to grant
+          themselves, so there is no default that skips this and still works.
+        */}
+        {!autoDetectEnabled && (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => void onToggleAutoDetect(true)}
+            style={({ pressed }) => [styles.autoInvite, pressed && styles.autoInvitePressed]}
+          >
+            <Text style={styles.autoInviteLbl}>Run automatically</Text>
+            <Text style={styles.autoInviteLead}>
+              SkelClock is built to clock you in and out on its own as you arrive at and leave
+              site — no tapping needed. Turn it on once and forget it&apos;s there.
+            </Text>
+            <Text style={styles.autoInviteAction}>Turn on auto-detect →</Text>
+          </Pressable>
+        )}
+
         {/* Only a supervisor's phone grows a second screen. The crew routes
             re-check the role server-side; this is wayfinding, not security. */}
         {home && home.role !== 'worker' && (
@@ -456,6 +479,14 @@ export default function ClockScreen() {
           >
             <Text style={styles.crewLinkText}>MY CREW — clock the whole crew on or off →</Text>
           </Pressable>
+        )}
+
+        {(canClockIn || canClockOut) && (
+          <Text style={styles.manualLbl}>
+            {autoDetectEnabled
+              ? 'Manual override — auto-detect usually does this for you'
+              : 'Manual clock — turn on auto-detect above so this happens by itself'}
+          </Text>
         )}
 
         {canClockIn && (
@@ -502,12 +533,13 @@ export default function ClockScreen() {
           </View>
         )}
 
-        <Section label="Auto-detect arrival">
+        <Section label={autoDetectEnabled ? 'Auto-detect arrival — on' : 'Auto-detect arrival'}>
           <View style={styles.switchRow}>
             <Text style={[styles.lead, styles.switchCopy]}>
-              Clock you in or out automatically when your phone notices you have arrived at or
-              left a job site — even if SkelClock is not open. Anything the phone is not sure
-              about still asks you to confirm first.
+              This is how SkelClock is meant to run: clocks you in or out on its own when your
+              phone notices you have arrived at or left a job site, even if the app is not
+              open. Anything the phone is not confident about still asks you to confirm first —
+              nothing gets clocked on a guess.
             </Text>
             <Pressable
               accessibilityRole="switch"
@@ -835,6 +867,22 @@ const styles = StyleSheet.create({
   },
   switchMark: { width: r.r2, height: r.r2, backgroundColor: 'transparent' },
   switchMarkOn: { backgroundColor: colors.green },
+
+  /* ── run automatically — the primary invitation, not a buried toggle ── */
+  autoInvite: {
+    gap: r.r8,
+    padding: r.r4,
+    backgroundColor: colors.fillGreen,
+    borderWidth: 1,
+    borderColor: colors.green,
+  },
+  autoInvitePressed: { backgroundColor: colors.paper200 },
+  autoInviteLbl: { ...t.lbl, color: colors.green },
+  autoInviteLead: { ...t.lead, color: colors.ink700 },
+  autoInviteAction: { ...t.act, fontSize: 15, color: colors.green },
+
+  /* ── the manual bands are the fallback now, not the plan ─────────────── */
+  manualLbl: { ...t.lbl, color: colors.inkFaint },
 
   /* ── the crew link — a supervisor's second screen ───────────────────── */
   crewLink: {

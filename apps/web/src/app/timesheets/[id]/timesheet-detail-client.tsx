@@ -192,7 +192,23 @@ function EventRow({
           {event.jobNumber ? `Job ${event.jobNumber}` : 'No job'}
           {event.activityName ? ` · ${event.activityName}` : ''}
         </span>
-        <span className="lbl" style={{ color: 'var(--faintest)' }}>{event.clockMethod}</span>
+        {/* Manual is the fallback path now, not the default — flagged rather
+            than shown in the same faint tone as everything else, and its
+            distance from site is always shown, not only when it lands
+            off-site: a manual clock is the one worth a second look either
+            way, on-site or not. */}
+        {event.clockMethod === 'manual' ? (
+          <span className="mk mk-setout">MANUAL</span>
+        ) : (
+          <span className="lbl" style={{ color: 'var(--faintest)' }}>{event.clockMethod}</span>
+        )}
+        {event.clockMethod === 'manual' &&
+          event.insideGeofence !== false &&
+          event.distanceM != null && (
+            <span className="lbl" style={{ color: 'var(--muted)' }}>
+              {Math.round(event.distanceM)}m from site
+            </span>
+          )}
         {event.insideGeofence === false && (
           <span className="mk mk-breach">
             {event.distanceM != null ? `${Math.round(event.distanceM)}M OFF-SITE` : 'OFF-SITE'}

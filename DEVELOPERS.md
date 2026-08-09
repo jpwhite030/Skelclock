@@ -270,6 +270,23 @@ The design rule: **tap-to-confirm is the fallback, not the norm** — but
 nothing auto-created becomes payroll unless the evidence is good, and the
 server is the judge.
 
+This is also the intended *default way of working*, not an optional extra
+bolted onto a manual time clock: the mobile clock screen frames auto-detect
+as the primary mode (a prominent invitation to turn it on sits above the
+manual buttons whenever it's off) and the manual Clock On/Knock Off bands as
+the fallback — labelled that way on screen — for when auto-detect can't
+reach a worker (no permission, no signal, not yet turned on). Manual clocking
+is not being removed or degraded: it's fully functional, still captures GPS
+and computes distance-from-site exactly as before (`evaluateGeofence` runs
+for every clock event with a job selected, regardless of `clockMethod`), and
+the office's timesheet detail screen flags a manual event distinctly and
+always shows its distance from site — the fallback path is the one that
+gets the closer look, not the one that gets removed. What changed is
+framing and emphasis, not capability: consent for background location still
+cannot be skipped (an OS-level "Always Allow" grant the worker has to make
+themselves), so there is no way to make auto-detect the default *state*, only
+the default *invitation*.
+
 ### Consent first
 
 Auto-detect is opt-in per worker. The first toggle shows a plain-language
