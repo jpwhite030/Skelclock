@@ -10,14 +10,20 @@
  * longitude / geofence_radius_m outside of the Odoo import.
  */
 
-import { Fragment, useEffect, useMemo, useState, useTransition } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState, useTransition } from 'react';
 import { MapContainer, TileLayer, Marker, Circle, useMap, useMapEvents } from 'react-leaflet';
 import L, { type LatLngExpression } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
 import type { SiteSummary } from '@skelclock/server';
 
-import { createSite, geocodeAddress, saveSiteLocation, type GeocodeResult } from './server-actions';
+import {
+  addressAtPin,
+  createSite,
+  geocodeAddress,
+  saveSiteLocation,
+  type GeocodeCandidate,
+} from './server-actions';
 
 // Leaflet's default marker images are resolved as relative URLs against the
 // CSS file, which breaks under Next's bundler. An inline SVG sidesteps the
@@ -95,6 +101,68 @@ function FlyTo({ latitude, longitude }: { latitude: number; longitude: number })
 }
 
 /**
+ * Reports the map's centre and bounds as the office pans and zooms.
+ *
+ * The centre feeds the address search: street names repeat across NSW, and a
+ * lookup fenced to where you are looking is the difference between finding
+ * your street in Balgownie and one in Sydney (see geocode.ts).
+ */
+function ViewWatcher({ onView }: { onView: (centre: L.LatLng, bounds: L.LatLngBounds) => void }) {
+  const map = useMap();
+  useEffect(() => {
+    const report = () => onView(map.getCenter(), map.getBounds());
+    report();
+    map.on('moveend zoomend', report);
+    return () => {
+      map.off('moveend zoomend', report);
+    };
+  }, [map, onView]);
+  return null;
+}
+
+/**
+ * The two ways to look at a site, because they answer different questions.
+ *
+ * Aerial is how you put a pin on a gate — a scaffold entrance is a thing you
+ * can see in a photograph and cannot see on a line drawing. Property is the
+ * NSW Base Map, which draws the cadastre and, crucially, the street numbers:
+ * it is how you check the pin is on number 63 and not on 59 next door.
+ *
+ * Property leads, because "is this the right house" is the question that was
+ * getting answered wrong. Aerial is one click away for the gate itself.
+ *
+ * The NSW service covers NSW only. Outside it the tiles come back empty, which
+ * is exactly when the Aerial toggle earns its place.
+ */
+const BASEMAPS = {
+  property: {
+    name: 'Property',
+    url: 'https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Base_Map/MapServer/tile/{z}/{y}/{x}',
+    attribution:
+      'Basemap &copy; Department of Customer Service (Spatial Services) NSW',
+    maxZoom: 21,
+  },
+  aerial: {
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    name: 'Aerial',
+    attribution:
+      'Tiles &copy; <a href="https://www.esri.com/">Esri</a> — Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+    maxZoom: 19,
+  },
+} as const;
+
+type BasemapKey = keyof typeof BASEMAPS;
+
+/**
+ * GURAS shouts — "63 KEMBLA STREET WOLLONGONG". That is how the register
+ * stores it, not how anyone wants to read a site list, so it is cased down for
+ * display. The register's own string is what gets saved as the address.
+ */
+function titleCase(s: string): string {
+  return s.replace(/[A-Za-z]+/g, (w) => w[0]!.toUpperCase() + w.slice(1).toLowerCase());
+}
+
+/**
  * The company default fence, in metres. One number, used wherever a new site
  * is created, so a fence is never quietly sized by how well a search went.
  */
@@ -109,7 +177,13 @@ interface NewSiteDraft {
   hoursStart: string;
   hoursEnd: string;
   /** Carried from the search so the panel can say the pin is a guess. */
-  precision: GeocodeResult['precision'];
+  precision: GeocodeCandidate['precision'];
+  /** Which register found it — an authoritative NSW property point, or OSM's
+   * best guess. The panel says so, because they deserve different trust. */
+  source: GeocodeCandidate['source'];
+  /** The search dropped words to find this, so the suburb asked for did not
+   * match. A near miss that looks exactly like a hit unless it is labelled. */
+  loosened: boolean;
   /** True until the office drags the pin, which is what makes it real. */
   pinUnconfirmed: boolean;
 }
@@ -157,10 +231,20 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
   const [addingSite, setAddingSite] = useState(false);
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
-  const [searchResults, setSearchResults] = useState<GeocodeResult[] | null>(null);
+  const [searchResults, setSearchResults] = useState<GeocodeCandidate[] | null>(null);
   const [newSite, setNewSite] = useState<NewSiteDraft | null>(null);
   const [creating, setCreating] = useState(false);
   const [addMessage, setAddMessage] = useState<string | null>(null);
+  const [basemap, setBasemap] = useState<BasemapKey>('property');
+  /** The address the NSW register says is under the dragged pin, waiting for
+   * the office to accept or ignore it. */
+  const [addressPrompt, setAddressPrompt] = useState<string | null>(null);
+
+  /** Where the map is looking. Feeds the address search; see ViewWatcher. */
+  const [view, setView] = useState<{ centre: L.LatLng; bounds: L.LatLngBounds } | null>(null);
+  const onView = useCallback((centre: L.LatLng, bounds: L.LatLngBounds) => {
+    setView({ centre, bounds });
+  }, []);
 
   const center = useMemo<LatLngExpression>(() => {
     const first = Object.values(drafts)[0];
@@ -195,20 +279,24 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
     setSearchResults(null);
     setNewSite(null);
     setAddMessage(null);
+    setAddressPrompt(null);
   };
 
   const runSearch = async () => {
     setSearching(true);
     setSearchResults(null);
-    const results = await geocodeAddress(query);
+    const results = await geocodeAddress(
+      query,
+      view ? { latitude: view.centre.lat, longitude: view.centre.lng } : undefined,
+    );
     setSearchResults(results);
     setSearching(false);
   };
 
-  const pickResult = (r: GeocodeResult) => {
+  const pickResult = (r: GeocodeCandidate) => {
     setNewSite({
-      name: nameFromAddress(r.label),
-      address: r.label,
+      name: r.source === 'nsw' ? titleCase(r.label) : nameFromAddress(r.label),
+      address: r.source === 'nsw' ? titleCase(r.label) : r.label,
       latitude: r.latitude,
       longitude: r.longitude,
       // Always 70m, the company default — never widened to compensate for a
@@ -225,7 +313,11 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
       hoursStart: '',
       hoursEnd: '',
       precision: r.precision,
-      pinUnconfirmed: r.precision !== 'address',
+      source: r.source,
+      loosened: r.loosened,
+      // A NSW property point is the site — there is nothing to confirm. Only a
+      // road centroid, an area, or a near miss needs the office to drag it.
+      pinUnconfirmed: r.precision !== 'address' || r.loosened,
     });
     setSearchResults(null);
   };
@@ -234,8 +326,25 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
     // Dragging the pin is the office saying where the site really is, so it
     // clears the guess flag — that is the only thing that does.
     setNewSite((prev) =>
-      prev ? { ...prev, latitude: lat, longitude: lng, pinUnconfirmed: false } : prev,
+      prev
+        ? { ...prev, latitude: lat, longitude: lng, pinUnconfirmed: false, loosened: false }
+        : prev,
     );
+
+    // And the address follows the pin.
+    //
+    // It used not to, which was quietly the worst bug on this screen: the
+    // office would drag a pin two doors up to the right gate and the site kept
+    // the address that had been typed. Coordinates and address then disagreed
+    // forever, and every screen downstream believed the string.
+    //
+    // Offered, not forced — `addressPrompt` puts it in front of the office to
+    // accept. A pin dragged to a compound entrance is genuinely at a different
+    // address from the site, and only a person knows which one to record.
+    setAddressPrompt(null);
+    void addressAtPin({ latitude: lat, longitude: lng }).then((found) => {
+      if (found) setAddressPrompt(titleCase(found.label));
+    });
   };
 
   const saveNewSite = () => {
@@ -316,14 +425,26 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
                   <div className="site-add__results">
                     {searchResults.map((r, i) => (
                       <button key={i} className="site-add__result" onClick={() => pickResult(r)}>
-                        <span>{r.label}</span>
+                        <span>{r.source === 'nsw' ? titleCase(r.label) : r.label}</span>
                         {/*
-                          Say outright when the geocoder only matched a road.
-                          The pin then sits somewhere along it — often hundreds
-                          of metres from the site — and a fence drawn around
-                          that will turn away the crew who actually turn up.
+                          Three different ways a result can be less than it
+                          looks, and all of them end with a fence in the wrong
+                          place if nobody says so.
+
+                          A near miss is the quietest and the worst: the search
+                          dropped the suburb to find anything at all, so this is
+                          the right street number in the wrong town. It reads
+                          identically to a hit.
                         */}
-                        {r.precision !== 'address' && (
+                        {r.loosened && (
+                          <span
+                            className="lbl"
+                            style={{ color: 'var(--cad-yellow)', marginLeft: '0.6em' }}
+                          >
+                            — not the suburb you asked for
+                          </span>
+                        )}
+                        {!r.loosened && r.precision !== 'address' && (
                           <span
                             className="lbl"
                             style={{ color: 'var(--cad-yellow)', marginLeft: '0.6em' }}
@@ -339,7 +460,8 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
                 )}
                 {searchResults && searchResults.length === 0 && (
                   <p className="lbl" style={{ color: 'var(--faint)' }}>
-                    No matches. Try a fuller address.
+                    Nothing in the NSW address register or OpenStreetMap. Check
+                    the spelling, or place the pin by hand on the map.
                   </p>
                 )}
 
@@ -355,12 +477,47 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
                           maxWidth: '52ch',
                         }}
                       >
-                        The search only matched the{' '}
-                        {newSite.precision === 'street' ? 'street' : 'suburb'}, not a street
-                        number — this pin is a guess and could be a long way from the site.
+                        {newSite.loosened
+                          ? 'That suburb had no match, so this is the same street number somewhere else. Check the suburb on the pin before saving.'
+                          : `The search only matched the ${
+                              newSite.precision === 'street' ? 'street' : 'suburb'
+                            }, not a street number — this pin is a guess and could be a long way from the site.`}{' '}
                         Drag it onto the gate before saving — the fence is {newSite.geofenceRadiusM}m
                         around wherever this pin ends up.
                       </p>
+                    )}
+
+                    {/*
+                      Confirmed against the register. Worth saying: it is the
+                      difference between a pin that is the property and a pin
+                      that is somewhere on the road, and until now the screen
+                      showed both the same way.
+                    */}
+                    {!newSite.pinUnconfirmed && newSite.source === 'nsw' && (
+                      <p className="lbl" style={{ color: 'var(--cad-green)' }}>
+                        Matched to the NSW address register — this pin is the property.
+                      </p>
+                    )}
+
+                    {addressPrompt && addressPrompt !== newSite.address && (
+                      <div className="site-add__prompt">
+                        <span className="lbl" style={{ color: 'var(--faint)' }}>
+                          The pin is now on
+                        </span>{' '}
+                        <span>{addressPrompt}</span>{' '}
+                        <button
+                          className="act"
+                          onClick={() => {
+                            setNewSite({ ...newSite, address: addressPrompt, name: addressPrompt });
+                            setAddressPrompt(null);
+                          }}
+                        >
+                          Use this address
+                        </button>
+                        <button className="act" onClick={() => setAddressPrompt(null)}>
+                          Keep {newSite.address ?? 'the typed address'}
+                        </button>
+                      </div>
                     )}
                     <div className="correction-row__form">
                       <label className="lbl" style={{ flex: '1 1 100%' }}>
@@ -482,16 +639,29 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
         )}
       </div>
 
-      <div className="sites-map-panel">
+      <div className="sites-map-panel" data-basemap={basemap}>
+        <div className="sites-map-basemap">
+          {(Object.keys(BASEMAPS) as BasemapKey[]).map((key) => (
+            <button
+              key={key}
+              className="act"
+              data-busy={basemap === key ? '' : undefined}
+              onClick={() => setBasemap(key)}
+            >
+              {BASEMAPS[key].name}
+            </button>
+          ))}
+        </div>
         <MapContainer center={center} zoom={12} scrollWheelZoom style={{ height: '100%', width: '100%' }}>
-          {/* Esri World Imagery: free, no API key, true-colour aerial photography —
-              a scaffold gate is easier to place against an actual photo of the
-              site than a street-map line drawing. */}
+          {/* `key` forces a fresh layer on switch: Leaflet keeps serving the
+              old tile URL if only the prop changes. */}
           <TileLayer
-            attribution='Tiles &copy; <a href="https://www.esri.com/">Esri</a> — Esri, Maxar, Earthstar Geographics, and the GIS User Community'
-            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-            maxZoom={19}
+            key={basemap}
+            attribution={BASEMAPS[basemap].attribution}
+            url={BASEMAPS[basemap].url}
+            maxZoom={BASEMAPS[basemap].maxZoom}
           />
+          <ViewWatcher onView={onView} />
           <PlaceOnClick armedSiteId={armedSiteId} onPlace={placeOrMove} />
 
           {newSite && (

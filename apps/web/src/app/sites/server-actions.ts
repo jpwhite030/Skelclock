@@ -14,11 +14,16 @@ import {
   addSiteExclusion,
   canManageEmployee,
   createSite as createSiteRecord,
+  geocode,
   removeSiteExclusion,
+  reverseNsw,
   SiteError,
   updateSiteLocation,
   updateSiteOperatingHours,
+  type GeocodeCandidate,
 } from '@skelclock/server';
+
+export type { GeocodeCandidate } from '@skelclock/server';
 
 import { db } from '../../lib/db';
 import { getDashboardSession } from '../../lib/session';
@@ -128,82 +133,46 @@ export async function removeExclusion(exclusionId: string): Promise<SaveLocation
 
 // --- add a site by address ---------------------------------------------------
 
-export interface GeocodeResult {
-  label: string;
-  latitude: number;
-  longitude: number;
-  /**
-   * How exact this pin is.
-   *
-   *   address   the geocoder matched a street number — the pin is the property
-   *   street    it matched the road only, and the pin is somewhere along it,
-   *             which can be hundreds of metres from the site
-   *   area      a suburb or locality centroid; useful only as a starting view
-   *
-   * This matters more here than in most address searches. OpenStreetMap's
-   * Australian house-number coverage is patchy — "200 Crown Street Wollongong"
-   * resolves to the building, while every number on Kembla Street falls back
-   * to the road, because nobody has mapped that street's numbers. The search
-   * gives no sign of the difference, so a street-centroid pin looks exactly
-   * like an exact one, and with a default 70m fence around it the workers who
-   * turn up get refused their clock-on.
-   */
-  precision: 'address' | 'street' | 'area';
+/**
+ * Address search, for the "add a site" panel.
+ *
+ * The lookup itself lives in packages/server/src/geocode.ts, along with the
+ * long explanation of why it asks the NSW address register before it asks
+ * OpenStreetMap. This is only the session check and the shape the client sees.
+ *
+ * `near` is the map centre. It is not a nicety: street names repeat across
+ * NSW, and without it a search for a Wollongong street can hand back a match
+ * in Sydney. See the ranking notes in geocode.ts.
+ */
+export async function geocodeAddress(
+  query: string,
+  near?: { latitude: number; longitude: number },
+): Promise<GeocodeCandidate[]> {
+  const session = await getDashboardSession();
+  if (!session) return [];
+  return geocode(query, { limit: 8, near });
 }
 
 /**
- * Server-side on purpose: Nominatim's usage policy requires a descriptive
- * User-Agent identifying the calling application, and a browser's own fetch
- * cannot set that header itself — only a server-side request can.
+ * What is actually at the pin.
+ *
+ * Dragging is the office correcting the search, and until now the correction
+ * only moved the coordinates — the site kept the address string that was
+ * typed. So a pin dragged two doors up still read "63 Kembla Street", and
+ * every screen downstream, every timesheet and every export believed it.
+ *
+ * Now the drag reports the nearest property in the NSW register, and the panel
+ * offers it. Empty outside NSW, or on open ground with nothing within 80m, in
+ * which case the typed address stands.
  */
-export async function geocodeAddress(query: string): Promise<GeocodeResult[]> {
+export async function addressAtPin(args: {
+  latitude: number;
+  longitude: number;
+}): Promise<GeocodeCandidate | null> {
   const session = await getDashboardSession();
-  if (!session) return [];
-
-  const q = query.trim();
-  if (q.length < 3) return [];
-
-  const url = new URL('https://nominatim.openstreetmap.org/search');
-  url.searchParams.set('q', q);
-  url.searchParams.set('format', 'jsonv2');
-  url.searchParams.set('limit', '8');
-  // Without this the response carries no house_number, so an exact match and a
-  // road centroid are indistinguishable — which is the whole problem.
-  url.searchParams.set('addressdetails', '1');
-  // SkelScaff's own sites are all AU — narrows an ambiguous street name to
-  // the right country instead of the top global match.
-  url.searchParams.set('countrycodes', 'au');
-
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      headers: { 'User-Agent': 'SkelClock/1.0 (site setup; matt@skelscaff.com.au)' },
-    });
-  } catch {
-    return [];
-  }
-  if (!response.ok) return [];
-
-  const results = (await response.json()) as Array<{
-    display_name: string;
-    lat: string;
-    lon: string;
-    address?: { house_number?: string; road?: string };
-  }>;
-
-  const mapped: GeocodeResult[] = results.map((r) => ({
-    label: r.display_name,
-    latitude: Number(r.lat),
-    longitude: Number(r.lon),
-    precision: r.address?.house_number ? 'address' : r.address?.road ? 'street' : 'area',
-  }));
-
-  // Exact addresses first. Nominatim ranks by its own relevance, which happily
-  // puts a road in the wrong suburb above a matching street number — searching
-  // "14 Kembla Street Wollongong" returns Port Kembla and Balgownie before
-  // Wollongong. Someone scanning a list picks the top one.
-  const rank = { address: 0, street: 1, area: 2 } as const;
-  return mapped.sort((a, b) => rank[a.precision] - rank[b.precision]);
+  if (!session) return null;
+  const nearest = await reverseNsw(args.latitude, args.longitude, 80);
+  return nearest[0] ?? null;
 }
 
 export interface CreateSiteResult extends SaveLocationResult {
