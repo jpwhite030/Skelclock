@@ -94,6 +94,12 @@ function FlyTo({ latitude, longitude }: { latitude: number; longitude: number })
   return null;
 }
 
+/**
+ * The company default fence, in metres. One number, used wherever a new site
+ * is created, so a fence is never quietly sized by how well a search went.
+ */
+const DEFAULT_GEOFENCE_RADIUS_M = 70;
+
 interface NewSiteDraft {
   name: string;
   address: string | null;
@@ -205,12 +211,17 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
       address: r.label,
       latitude: r.latitude,
       longitude: r.longitude,
-      // 70m is right for a pin on the property. Around a road centroid it is
-      // a trap: the pin can be hundreds of metres from the site, and the first
-      // anyone hears of it is a crew being refused their clock-on. So an
-      // inexact match opens wide, and tightening it is a deliberate act once
-      // the pin is where the gate actually is.
-      geofenceRadiusM: r.precision === 'address' ? 70 : 250,
+      // Always 70m, the company default — never widened to compensate for a
+      // vague geocode.
+      //
+      // This used to open to 250m on an inexact match, on the reasoning that a
+      // pin dropped on a road centroid needs a fence big enough to still cover
+      // the site. That was the wrong lever: it silently changed a payroll
+      // boundary to paper over a search problem, so a site could end up fenced
+      // four times wider than intended and nobody would know why. The fix for
+      // a bad pin is a better pin — hence the warning below and the drag — not
+      // a bigger circle.
+      geofenceRadiusM: DEFAULT_GEOFENCE_RADIUS_M,
       hoursStart: '',
       hoursEnd: '',
       precision: r.precision,
@@ -347,9 +358,8 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
                         The search only matched the{' '}
                         {newSite.precision === 'street' ? 'street' : 'suburb'}, not a street
                         number — this pin is a guess and could be a long way from the site.
-                        Drag it onto the gate, then set the fence. It is opened to{' '}
-                        {newSite.geofenceRadiusM}m until you do, so nobody gets turned away
-                        from a boundary drawn in the wrong place.
+                        Drag it onto the gate before saving — the fence is {newSite.geofenceRadiusM}m
+                        around wherever this pin ends up.
                       </p>
                     )}
                     <div className="correction-row__form">
