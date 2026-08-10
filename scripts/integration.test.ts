@@ -2311,6 +2311,11 @@ test('removing an exclusion lets the employee clock in again', async () => {
 
     assert.equal(await isEmployeeExcludedFromSite(db, { employeeId: fx.employeeId, siteId: fx.siteId }), false);
 
+    // The lifted row must not keep filtering job lists — it is soft-deleted,
+    // and every reader has to say so or a worker silently loses a site.
+    const stillExcluded = await excludedSiteIds(db, { employeeId: fx.employeeId });
+    assert.equal(stillExcluded.has(fx.siteId), false);
+
     // Lifting a lockout is history, not an erasure: the row stays, stamped.
     const lifted = await one<{ removed_at: Date | null }>(
       db,

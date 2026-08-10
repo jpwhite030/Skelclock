@@ -194,10 +194,20 @@ export async function isEmployeeExcludedFromSite(
   return row != null;
 }
 
-/** All site ids this employee is locked out of, for filtering a job list in one query. */
+/**
+ * All site ids this employee is locked out of, for filtering a job list in one
+ * query.
+ *
+ * `removed_at is null` is the whole correctness of this function since 0008
+ * made lifting a lockout a soft delete. Without it a lockout that was lifted
+ * keeps hiding the site forever, and the office has no way to tell — the
+ * exclusion no longer appears on any screen, so the only symptom is a worker
+ * who cannot see a job nobody has excluded them from.
+ */
 export async function excludedSiteIds(db: Db, args: { employeeId: string }): Promise<Set<string>> {
   const { rows } = await db.query<{ site_id: string }>(
-    'select site_id from employee_site_exclusion where employee_id = $1',
+    `select site_id from employee_site_exclusion
+      where employee_id = $1 and removed_at is null`,
     [args.employeeId],
   );
   return new Set(rows.map((r) => r.site_id));
