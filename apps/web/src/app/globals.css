@@ -563,6 +563,19 @@ main.paper {
   background: var(--canvas-200); border: 1px solid var(--line-strong); color: var(--bone);
   font: 500 13px var(--font-mono); padding: 4px 8px; min-height: 26px; width: 9ch;
 }
+/* Date and select were left on the browser's own controls, which on a dark
+   ground means a white box in the middle of the sheet. Same treatment as the
+   number and time inputs above; auto width because a weekday name and a date
+   do not fit in 9ch. */
+.settings-form__row input[type="date"],
+.settings-form__row select {
+  background: var(--canvas-200); border: 1px solid var(--line-strong); color: var(--bone);
+  font: 500 13px var(--font-mono); padding: 4px 8px; min-height: 26px;
+}
+.settings-form__row select option { background: var(--canvas-200); color: var(--bone); }
+.settings-form__row input[type="date"]:focus-visible,
+.settings-form__row select:focus-visible { border-color: var(--cad-yellow); outline: none; }
+
 .settings-form__row input[type="checkbox"],
 .settings-form__row input[type="radio"] { accent-color: var(--brand); }
 .settings-form__hint { display: block; color: var(--faint); font-size: 11px; margin-top: 2px; }

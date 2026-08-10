@@ -17,7 +17,8 @@
 
 import Link from 'next/link';
 
-import { listTimesheets, type TimesheetRow } from '@skelclock/server';
+import { getCompanySettings, listTimesheets, type TimesheetRow } from '@skelclock/server';
+import { recentPayrollPeriods, type PayrollPeriod } from '@skelclock/core';
 
 import { db } from '../../lib/db';
 import { getDashboardSession } from '../../lib/session';
@@ -43,12 +44,32 @@ export default async function TimesheetsPage({
 
   const params = await searchParams;
 
-  // Defaults to the last fortnight — one pay period, the window payroll works
-  // in.
-  const today = new Date();
-  const defaultFrom = new Date(today.getTime() - 13 * 86_400_000).toISOString().slice(0, 10);
-  const from = params.from || defaultFrom;
-  const to = params.to || today.toISOString().slice(0, 10);
+  /*
+   * The window opens on a real pay period, not on "the last fortnight".
+   *
+   * It used to be today minus thirteen days, which is a fortnight-shaped
+   * window that almost never lines up with a fortnight. Every total on this
+   * screen was therefore a sum over a period that does not exist: part of one
+   * pay run and part of the next, which is exactly the number nobody wants and
+   * the one that gets copied into a spreadsheet anyway.
+   *
+   * Free dates stay — reconciling a dispute needs them — but they are no
+   * longer where the screen starts.
+   */
+  const settings = await getCompanySettings(db, session.companyId);
+  const today = new Date().toISOString().slice(0, 10);
+  const periods = recentPayrollPeriods(today, {
+    period: settings.payrollPeriod,
+    weekStartsOn: settings.payrollWeekStartsOn,
+    anchorDate: settings.payrollAnchorDate,
+  }, 8);
+
+  const chosen = periods.find((p) => periodValue(p) === params.period);
+  // A period wins over loose dates when both arrive: the picker is the control
+  // that was just used, and the date boxes still hold the old period's values.
+  const from = chosen?.start ?? params.from ?? periods[0]!.start;
+  const to = chosen?.end ?? params.to ?? periods[0]!.end;
+  const activePeriod = chosen ?? periods.find((p) => p.start === from && p.end === to) ?? null;
 
   const [employees, crews, jobs] = await Promise.all([
     db.query<{ id: string; full_name: string }>(
@@ -99,7 +120,9 @@ export default async function TimesheetsPage({
 
       <div className="sht" style={{ paddingTop: 'var(--r-2)' }}>
         <h1 className="dsp">Timesheets</h1>
-        <span className="lbl no">SHT 02 / Schedule — pay period</span>
+        <span className="lbl no">
+          SHT 02 / Schedule — {settings.payrollPeriod === 'fortnightly' ? 'fortnightly' : 'weekly'}
+        </span>
       </div>
 
       {/* B. Spec line. Not boxed inputs in a card — inline mono controls read
@@ -107,7 +130,23 @@ export default async function TimesheetsPage({
              visible rule, a hover ground and a real APPLY button, so nobody
              has to guess whether it took. */}
       <form className="spec" method="get">
-        <span>Period</span>
+        <label>
+          Pay period
+          <select name="period" defaultValue={activePeriod ? periodValue(activePeriod) : ''}>
+            {/* Only offered when the dates do not match a real period, so it
+                is a report of what happened rather than a thing to pick. */}
+            {!activePeriod && <option value="">Custom dates</option>}
+            {periods.map((p, i) => (
+              <option key={periodValue(p)} value={periodValue(p)}>
+                {periodLabel(p)}
+                {i === 0 ? ' — current' : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <span className="sep">·</span>
+        <span>Dates</span>
         <input type="date" name="from" defaultValue={from} aria-label="From date" />
         <span className="sep">→</span>
         <input type="date" name="to" defaultValue={to} aria-label="To date" />
@@ -345,4 +384,24 @@ function formatDate(isoDate: string): string {
   const d = new Date(`${isoDate}T00:00:00`);
   const day = d.toLocaleDateString('en-AU', { weekday: 'short' });
   return `${day} ${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/** A period as one query-string value, so the picker is a single control
+ * rather than two dates the user has to keep consistent. */
+function periodValue(p: PayrollPeriod): string {
+  return `${p.start}_${p.end}`;
+}
+
+/** "4 – 17 Aug" or "28 Jul – 10 Aug", spelling the month twice only when the
+ * period crosses one. */
+function periodLabel(p: PayrollPeriod): string {
+  const start = new Date(`${p.start}T00:00:00Z`);
+  const end = new Date(`${p.end}T00:00:00Z`);
+  const day = (d: Date) => d.getUTCDate();
+  const month = (d: Date) =>
+    d.toLocaleDateString('en-AU', { month: 'short', timeZone: 'UTC' });
+
+  return start.getUTCMonth() === end.getUTCMonth()
+    ? `${day(start)} – ${day(end)} ${month(end)}`
+    : `${day(start)} ${month(start)} – ${day(end)} ${month(end)}`;
 }
