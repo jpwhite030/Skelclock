@@ -58,6 +58,14 @@ const LAST_TRIGGER_KEY = 'skelclock.geofence.last_trigger';
 const MAX_WATCHED_SITES = 20;
 
 /**
+ * Smallest region iOS will monitor dependably. Apple's own guidance puts the
+ * floor near 100m, because region monitoring runs off coarse cell and wifi
+ * position rather than GPS. Anything tighter is registered and then quietly
+ * never fires.
+ */
+const MIN_REGION_RADIUS_M = 100;
+
+/**
  * How close together two triggers of the same type, for the same job, have
  * to land before the second is dropped as GPS bounce rather than treated as
  * a second real arrival/departure. Kept in sync by hand with
@@ -183,12 +191,21 @@ async function notify(args: {
   const ambiguous = candidateJobIds.length > 1;
 
   if (autoConfirmed) {
+    // The time is the thing a worker checks. A clock they did not press has to
+    // say when it happened, or the only way to know whether the app caught the
+    // right moment is to open it — and a notification that has to be opened to
+    // be useful is a notification that failed. It is also what makes a wrong
+    // one arguable: "it says 6:42, I was still driving" is a correction the
+    // office can act on.
+    const at = new Date();
+    const stamp = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+
     // Never fires when ambiguous - shouldAutoConfirmGeofence server-side
     // refuses whenever candidateJobIds carries more than one entry.
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: arrived ? "You're clocked in" : "You're clocked out",
-        body: `Automatically ${arrived ? 'clocked in at' : 'clocked out from'} ${siteName}. Open SkelClock if that's not right.`,
+        title: arrived ? `Clocked in at ${stamp}` : `Clocked off at ${stamp}`,
+        body: `${siteName} — done automatically. Open SkelClock if that's not right.`,
       },
       trigger: null,
     });
@@ -331,7 +348,19 @@ async function startWatchingJobs(jobs: JobOption[]): Promise<StartWatchingResult
       identifier: j.id,
       latitude: j.latitude,
       longitude: j.longitude,
-      radius: j.geofenceRadiusM,
+      // Not the office's fence — the radius at which the OS agrees to wake us.
+      //
+      // iOS monitors regions off coarse cell and wifi position to keep the
+      // radio asleep, and stops firing reliably below about 100m. A site fenced
+      // at 10m for a small office building is a region iOS will mostly ignore,
+      // so the worker walks in and nothing happens at all — the failure is
+      // total and silent, which is the worst kind.
+      //
+      // Widening only changes when we are woken. The task re-evaluates the fix
+      // against each site's real geofenceRadiusM before it treats anyone as
+      // arrived, so a wake 60m from a 10m fence resolves to no candidate and
+      // no clock. Coarse trigger, exact decision.
+      radius: Math.max(j.geofenceRadiusM, MIN_REGION_RADIUS_M),
       notifyOnEnter: true,
       notifyOnExit: true,
     })),
