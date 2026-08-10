@@ -15,3 +15,4 @@ export * from './authz.js';
 export * from './exceptions.js';
 export * from './notifications.js';
 export * from './export.js';
+export * from './geocode.js';
