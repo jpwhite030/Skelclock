@@ -6,9 +6,15 @@ import {
   blocksClockIn,
   distanceMetres,
   evaluateGeofence,
+  meetsMinimumDwell,
   shouldAutoConfirmGeofence,
   shouldRaiseGeofenceException,
 } from './geo.js';
+import {
+  isInPayrollPeriod,
+  payrollPeriodFor,
+  recentPayrollPeriods,
+} from './payroll-period.js';
 import {
   applyTransition,
   currentShift,
@@ -805,4 +811,142 @@ test('sync job keys collapse duplicate enqueues', () => {
     syncJobKey('timesheet', 'ts-1', 'push_attendance'),
     syncJobKey('timesheet', 'ts-1', 'push_attendance'),
   );
+});
+
+// --- dwell time -------------------------------------------------------------
+
+test('meetsMinimumDwell: a drive-past fails, a real arrival passes', () => {
+  const now = Date.parse('2026-08-10T07:05:00Z');
+  const arrived = (minutesAgo: number) => now - minutesAgo * 60_000;
+
+  // Crossed the fence 90 seconds ago — that is the highway, not a shift.
+  assert.equal(
+    meetsMinimumDwell({ insideSinceMs: arrived(1.5), nowMs: now, minimumMinutes: 5 }),
+    false,
+  );
+  assert.equal(
+    meetsMinimumDwell({ insideSinceMs: arrived(6), nowMs: now, minimumMinutes: 5 }),
+    true,
+  );
+  // Exactly on the threshold counts — the boundary belongs to the worker.
+  assert.equal(
+    meetsMinimumDwell({ insideSinceMs: arrived(5), nowMs: now, minimumMinutes: 5 }),
+    true,
+  );
+});
+
+test('meetsMinimumDwell: 0 disables the rule, unknown arrival fails it', () => {
+  const now = Date.parse('2026-08-10T07:05:00Z');
+  assert.equal(meetsMinimumDwell({ insideSinceMs: null, nowMs: now, minimumMinutes: 0 }), true);
+  // We cannot judge what we were not told, and this gates the automatic path.
+  assert.equal(meetsMinimumDwell({ insideSinceMs: null, nowMs: now, minimumMinutes: 5 }), false);
+});
+
+test('meetsMinimumDwell: an arrival stamped in the future is not evidence', () => {
+  const now = Date.parse('2026-08-10T07:05:00Z');
+  assert.equal(
+    meetsMinimumDwell({ insideSinceMs: now + 60_000, nowMs: now, minimumMinutes: 5 }),
+    false,
+  );
+});
+
+test('shouldAutoConfirmGeofence holds back an arrival that has not stayed', () => {
+  const now = Date.parse('2026-08-10T07:05:00Z');
+  const base = { insideGeofence: true as const, accuracyM: 8, candidateSiteCount: 1, nowMs: now };
+
+  // Everything else perfect, but 90 seconds inside: needs a tap, not a clock.
+  assert.equal(
+    shouldAutoConfirmGeofence({ ...base, insideSinceMs: now - 90_000, minimumDwellMinutes: 5 }),
+    false,
+  );
+  assert.equal(
+    shouldAutoConfirmGeofence({ ...base, insideSinceMs: now - 400_000, minimumDwellMinutes: 5 }),
+    true,
+  );
+  // Company has the rule switched off: unchanged from before it existed.
+  assert.equal(
+    shouldAutoConfirmGeofence({ ...base, insideSinceMs: null, minimumDwellMinutes: 0 }),
+    true,
+  );
+});
+
+// --- payroll periods --------------------------------------------------------
+
+const WEEKLY = { period: 'weekly' as const, weekStartsOn: 1, anchorDate: null };
+// A real Monday: 2026-08-03.
+const FORTNIGHTLY = {
+  period: 'fortnightly' as const,
+  weekStartsOn: 1,
+  anchorDate: '2026-08-03',
+};
+
+test('payrollPeriodFor: a week runs Monday to Sunday', () => {
+  assert.deepEqual(payrollPeriodFor('2026-08-10', WEEKLY), {
+    start: '2026-08-10',
+    end: '2026-08-16',
+  });
+  // Sunday belongs to the week that started six days earlier, not the next one.
+  assert.deepEqual(payrollPeriodFor('2026-08-16', WEEKLY), {
+    start: '2026-08-10',
+    end: '2026-08-16',
+  });
+});
+
+test('payrollPeriodFor: a fortnight is counted from the anchor, both ways', () => {
+  // Anchor week itself.
+  assert.deepEqual(payrollPeriodFor('2026-08-05', FORTNIGHTLY), {
+    start: '2026-08-03',
+    end: '2026-08-16',
+  });
+  // Second week of the same fortnight.
+  assert.deepEqual(payrollPeriodFor('2026-08-12', FORTNIGHTLY), {
+    start: '2026-08-03',
+    end: '2026-08-16',
+  });
+  // Next fortnight.
+  assert.deepEqual(payrollPeriodFor('2026-08-17', FORTNIGHTLY), {
+    start: '2026-08-17',
+    end: '2026-08-30',
+  });
+  // Before the anchor — floor on a negative difference, not toward zero.
+  assert.deepEqual(payrollPeriodFor('2026-07-27', FORTNIGHTLY), {
+    start: '2026-07-20',
+    end: '2026-08-02',
+  });
+});
+
+test('payrollPeriodFor: a week that starts Sunday shifts every boundary', () => {
+  const sundayWeek = { period: 'weekly' as const, weekStartsOn: 7, anchorDate: null };
+  assert.deepEqual(payrollPeriodFor('2026-08-10', sundayWeek), {
+    start: '2026-08-09',
+    end: '2026-08-15',
+  });
+});
+
+test('payrollPeriodFor: fortnightly with no anchor degrades to weekly, not a throw', () => {
+  // 0008 forbids this state; a timesheet screen still should not crash on it.
+  assert.deepEqual(
+    payrollPeriodFor('2026-08-10', { period: 'fortnightly', weekStartsOn: 1, anchorDate: null }),
+    { start: '2026-08-10', end: '2026-08-16' },
+  );
+});
+
+test('recentPayrollPeriods walks backwards without skipping one', () => {
+  assert.deepEqual(recentPayrollPeriods('2026-08-12', FORTNIGHTLY, 3), [
+    { start: '2026-08-03', end: '2026-08-16' },
+    { start: '2026-07-20', end: '2026-08-02' },
+    { start: '2026-07-06', end: '2026-07-19' },
+  ]);
+  assert.deepEqual(recentPayrollPeriods('2026-08-12', WEEKLY, 2), [
+    { start: '2026-08-10', end: '2026-08-16' },
+    { start: '2026-08-03', end: '2026-08-09' },
+  ]);
+});
+
+test('isInPayrollPeriod includes both ends', () => {
+  const p = payrollPeriodFor('2026-08-10', FORTNIGHTLY);
+  assert.equal(isInPayrollPeriod('2026-08-03', p), true);
+  assert.equal(isInPayrollPeriod('2026-08-16', p), true);
+  assert.equal(isInPayrollPeriod('2026-08-17', p), false);
+  assert.equal(isInPayrollPeriod('2026-08-02', p), false);
 });

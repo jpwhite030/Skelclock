@@ -5,3 +5,4 @@ export * from './segments.js';
 export * from './exceptions.js';
 export * from './idempotency.js';
 export * from './operating-hours.js';
+export * from './payroll-period.js';

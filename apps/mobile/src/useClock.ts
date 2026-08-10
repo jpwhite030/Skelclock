@@ -48,6 +48,7 @@ import {
   isAutoDetectEnabled,
   refreshWatchedJobsIfEnabled,
   setAutoDetectEnabled,
+  settlePendingArrivals,
   type PermissionHealth,
 } from './geofence';
 import { EventQueue, type QueuedEvent } from './queue';
@@ -140,6 +141,8 @@ export function useClock(employeeId: string | null) {
   // submit the same events twice. Harmless server-side thanks to idempotency,
   // but it wastes a worker's data allowance.
   const flushing = useRef(false);
+  /** Ticket for the newest refresh; older ones drop their result. */
+  const refreshSeq = useRef(0);
 
   // --- setup ---------------------------------------------------------------
 
@@ -228,8 +231,18 @@ export function useClock(employeeId: string | null) {
   useEffect(() => {
     const sub = AppState.addEventListener('change', (next) => {
       if (next === 'active') {
-        void refresh();
-        void sync();
+        // Sequenced, not fired together: sync() runs a refresh of its own
+        // when it gets events accepted, and two refreshes racing is what put
+        // the clock state on a see-saw.
+        void (async () => {
+          // Before the sync, not after: an arrival held while the app was
+          // closed becomes a real clock event here, and the sync that follows
+          // is what carries it up. The other way round leaves it sitting in
+          // the queue until something else happens to trigger a flush.
+          await settlePendingArrivals().catch(() => undefined);
+          await sync();
+          await refresh();
+        })();
         void checkPermissionHealth().then((permissionHealth) => {
           setState((s) => ({ ...s, permissionHealth }));
           void checkinDevice(apiRef.current, permissionHealth);
@@ -243,8 +256,10 @@ export function useClock(employeeId: string | null) {
   // Keeps the running hours figure honest without hammering the API.
   useEffect(() => {
     const timer = setInterval(() => {
-      void refresh();
-      void sync();
+      void (async () => {
+        await sync();
+        await refresh();
+      })();
     }, REFRESH_MS);
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -253,6 +268,24 @@ export function useClock(employeeId: string | null) {
   // --- data ----------------------------------------------------------------
 
   const refresh = useCallback(async (): Promise<void> => {
+    // Refreshes overlap constantly — a 60s timer, coming back to the
+    // foreground, and sync() firing one of its own whenever it gets an event
+    // accepted. Two of them in flight is the normal case, not the edge case,
+    // and whichever setState lands last wins regardless of which read the
+    // newer data.
+    //
+    // That is the clock flicker: press Clock on, the queued event makes the
+    // screen say ON THE JOB, and then an older in-flight refresh — issued
+    // before the server ingested it, and reading the queue after sync had
+    // already emptied it — resolves to `off` and puts the screen back to NOT
+    // CLOCKED ON for a second. Nothing is wrong with the data; the responses
+    // simply arrived out of order.
+    //
+    // So each refresh takes a ticket and only the newest one is allowed to
+    // write. Stale replies are read and dropped.
+    const ticket = ++refreshSeq.current;
+    const isStale = () => ticket !== refreshSeq.current;
+
     const queue = queueRef.current;
     const pending = queue ? await queue.pending() : [];
 
@@ -276,6 +309,8 @@ export function useClock(employeeId: string | null) {
         })
         .catch(() => undefined);
 
+      if (isStale()) return;
+
       setState((s) => ({
         ...s,
         loading: false,
@@ -292,6 +327,8 @@ export function useClock(employeeId: string | null) {
         online: true,
       }));
     } catch {
+      if (isStale()) return;
+
       // Offline: keep whatever we last knew and fold in the local queue.
       setState((s) => {
         const derived = applyQueued(s.home?.clockState ?? s.clockState, pending);

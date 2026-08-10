@@ -37,6 +37,7 @@ import {
   sendOtp,
   verifyOtp,
   signInAsDemoWorker,
+  signInWithEmail,
   toE164,
   IS_DEMO,
   DEMO_NUMBERS,
@@ -45,8 +46,11 @@ import { colors, r, type as t, MIN_TAP } from '../src/theme';
 
 export default function LoginScreen() {
   const [phase, setPhase] = useState<'phone' | 'code'>('phone');
+  const [method, setMethod] = useState<'phone' | 'email'>('phone');
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -65,6 +69,19 @@ export default function LoginScreen() {
     } finally {
       setBusy(false);
       setPending(null);
+    }
+  };
+
+  const submitEmail = async (): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      await signInWithEmail(email, password);
+      // The root layout notices the session and routes onward.
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not sign in. Try again.');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -171,6 +188,54 @@ export default function LoginScreen() {
               </Text>
             </View>
           </>
+        ) : method === 'email' ? (
+          <>
+            <Field label="Work email">
+              <TextInput
+                style={styles.input}
+                value={email}
+                onChangeText={setEmail}
+                placeholder="you@skelscaff.com.au"
+                placeholderTextColor={colors.inkFaint}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoComplete="email"
+                textContentType="emailAddress"
+                autoFocus
+                editable={!busy}
+              />
+            </Field>
+
+            <Field label="Password">
+              <TextInput
+                style={styles.input}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+                autoCapitalize="none"
+                autoComplete="current-password"
+                textContentType="password"
+                editable={!busy}
+              />
+            </Field>
+
+            <Action
+              label="Sign in"
+              busy={busy}
+              disabled={!email.includes('@') || !password}
+              onPress={() => void submitEmail()}
+            />
+
+            <Pressable
+              style={styles.link}
+              onPress={() => {
+                setMethod('phone');
+                setError(null);
+              }}
+            >
+              <Text style={styles.linkText}>Use my mobile number instead</Text>
+            </Pressable>
+          </>
         ) : phase === 'phone' ? (
           <>
             <Field label="Your mobile number">
@@ -198,6 +263,16 @@ export default function LoginScreen() {
               disabled={phone.replace(/\D/g, '').length < 9}
               onPress={() => void requestCode()}
             />
+
+            <Pressable
+              style={styles.link}
+              onPress={() => {
+                setMethod('email');
+                setError(null);
+              }}
+            >
+              <Text style={styles.linkText}>Use email and password instead</Text>
+            </Pressable>
           </>
         ) : (
           <>

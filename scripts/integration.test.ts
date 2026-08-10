@@ -48,6 +48,9 @@ import {
   SuggestionError,
   supervises,
   updateCompanySettings,
+  setUserRole,
+  syncRolesFromOdoo,
+  listRoleAssignments,
   updateExceptionStatus,
   updateSiteOperatingHours,
   voidEvent,
@@ -58,6 +61,19 @@ import {
   type PushMessage,
   type PushSender,
 } from '@skelclock/server';
+
+/**
+ * The settings these tests do not care about. updateCompanySettings is a full
+ * replace by design — it makes a caller decide about every field rather than
+ * silently resetting one — so the fields under test are spread over these.
+ */
+const OTHER_SETTINGS = {
+  geofenceMinDwellMinutes: 0,
+  payrollPeriod: 'weekly' as const,
+  payrollWeekStartsOn: 1,
+  payrollAnchorDate: null,
+};
+
 
 import { createLocalDb, seedFixture, type Fixture } from './local-db.js';
 
@@ -1739,6 +1755,11 @@ test('Phase 3: a confident, unambiguous auto-geofence clock-in lands live, no ta
           eventType: 'clock_in',
           deviceTime: '2026-08-04T06:00:00Z',
           clockMethod: 'auto_geofence',
+          // Arrived a quarter of an hour before the phone raised this, so the
+          // company's five-minute minimum is comfortably served. Without it
+          // the event cannot prove anyone stayed and drops to tap-to-confirm,
+          // which is the case the next test covers.
+          insideSince: '2026-08-04T05:45:00Z',
         }),
       ],
     });
@@ -1767,6 +1788,88 @@ test('Phase 3: a confident, unambiguous auto-geofence clock-in lands live, no ta
       employeeId: fx.employeeId,
     });
     assert.equal(suggestions.length, 0);
+  } finally {
+    await close();
+  }
+});
+
+test('Phase 3: an arrival that has not stayed long enough asks for a tap', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    const result = await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [
+        clockEvent(fx, {
+          eventType: 'clock_in',
+          deviceTime: '2026-08-04T06:00:00Z',
+          clockMethod: 'auto_geofence',
+          // Ninety seconds inside the fence. That is the highway, or the
+          // servo next door — not someone starting a shift.
+          insideSince: '2026-08-04T05:58:30Z',
+        }),
+      ],
+    });
+
+    const outcome = result.outcomes[0]!;
+    assert.equal(outcome.status, 'created');
+    assert.equal(outcome.status === 'created' && outcome.autoConfirmed, false);
+
+    // Refused the automatic path, not the clock: it is waiting for a tap.
+    const suggestions = await listPendingSuggestions(db, {
+      companyId: fx.companyId,
+      employeeId: fx.employeeId,
+    });
+    assert.equal(suggestions.length, 1);
+  } finally {
+    await close();
+  }
+});
+
+test('Phase 3: a client that reports no arrival time falls back to a tap', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    // An older build, or a manual queue entry. We cannot judge dwell, and the
+    // doctrine everywhere in geo.ts is that unjudged means a human decides.
+    const result = await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [
+        clockEvent(fx, {
+          eventType: 'clock_in',
+          deviceTime: '2026-08-04T06:00:00Z',
+          clockMethod: 'auto_geofence',
+        }),
+      ],
+    });
+
+    const outcome = result.outcomes[0]!;
+    assert.equal(outcome.status === 'created' && outcome.autoConfirmed, false);
+  } finally {
+    await close();
+  }
+});
+
+test('Phase 3: a company with the dwell rule off is unchanged by it', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await db.query('update company set geofence_min_dwell_minutes = 0 where id = $1', [
+      fx.companyId,
+    ]);
+
+    const result = await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [
+        clockEvent(fx, {
+          eventType: 'clock_in',
+          deviceTime: '2026-08-04T06:00:00Z',
+          clockMethod: 'auto_geofence',
+        }),
+      ],
+    });
+
+    assert.equal(result.outcomes[0]!.status === 'created' && result.outcomes[0]!.autoConfirmed, true);
   } finally {
     await close();
   }
@@ -1936,6 +2039,7 @@ test('a clock-in outside operating hours is refused', async () => {
   const { db, fx, close } = await freshDb();
   try {
     await updateCompanySettings(db, {
+      ...OTHER_SETTINGS,
       companyId: fx.companyId,
       autoLunchEnabled: false,
       autoLunchThresholdMinutes: 300,
@@ -1973,6 +2077,7 @@ test('a clock-in inside operating hours is accepted', async () => {
   const { db, fx, close } = await freshDb();
   try {
     await updateCompanySettings(db, {
+      ...OTHER_SETTINGS,
       companyId: fx.companyId,
       autoLunchEnabled: false,
       autoLunchThresholdMinutes: 300,
@@ -1999,6 +2104,7 @@ test('operating hours never block a clock-out, even after hours', async () => {
   const { db, fx, close } = await freshDb();
   try {
     await updateCompanySettings(db, {
+      ...OTHER_SETTINGS,
       companyId: fx.companyId,
       autoLunchEnabled: false,
       autoLunchThresholdMinutes: 300,
@@ -2032,6 +2138,7 @@ test('a site override wins over the company default operating hours', async () =
   const { db, fx, close } = await freshDb();
   try {
     await updateCompanySettings(db, {
+      ...OTHER_SETTINGS,
       companyId: fx.companyId,
       autoLunchEnabled: false,
       autoLunchThresholdMinutes: 300,
@@ -2066,6 +2173,7 @@ test('an overnight operating window wraps past midnight correctly', async () => 
   try {
     // A site that only runs overnight: 22:00-06:00.
     await updateCompanySettings(db, {
+      ...OTHER_SETTINGS,
       companyId: fx.companyId,
       autoLunchEnabled: false,
       autoLunchThresholdMinutes: 300,
@@ -2105,6 +2213,7 @@ test('a supervisor filling in a missed clock-in bypasses operating hours', async
   const { db, fx, close } = await freshDb();
   try {
     await updateCompanySettings(db, {
+      ...OTHER_SETTINGS,
       companyId: fx.companyId,
       autoLunchEnabled: false,
       autoLunchThresholdMinutes: 300,
@@ -2194,12 +2303,26 @@ test('removing an exclusion lets the employee clock in again', async () => {
 
     const row = await one<{ id: string }>(
       db,
-      'select id from employee_site_exclusion where employee_id = $1 and site_id = $2',
+      `select id from employee_site_exclusion
+        where employee_id = $1 and site_id = $2 and removed_at is null`,
       [fx.employeeId, fx.siteId],
     );
     await removeSiteExclusion(db, { companyId: fx.companyId, exclusionId: row!.id });
 
     assert.equal(await isEmployeeExcludedFromSite(db, { employeeId: fx.employeeId, siteId: fx.siteId }), false);
+
+    // The lifted row must not keep filtering job lists — it is soft-deleted,
+    // and every reader has to say so or a worker silently loses a site.
+    const stillExcluded = await excludedSiteIds(db, { employeeId: fx.employeeId });
+    assert.equal(stillExcluded.has(fx.siteId), false);
+
+    // Lifting a lockout is history, not an erasure: the row stays, stamped.
+    const lifted = await one<{ removed_at: Date | null }>(
+      db,
+      'select removed_at from employee_site_exclusion where id = $1',
+      [row!.id],
+    );
+    assert.ok(lifted?.removed_at, 'the exclusion row should survive, marked removed');
 
     const result = await ingestEvents(db, {
       companyId: fx.companyId,
@@ -2338,6 +2461,7 @@ test('auto-lunch, enabled company-wide, reduces the worker home screen\'s paid h
   const { db, fx, close } = await freshDb();
   try {
     await updateCompanySettings(db, {
+      ...OTHER_SETTINGS,
       companyId: fx.companyId,
       autoLunchEnabled: true,
       autoLunchThresholdMinutes: 300,
@@ -2379,6 +2503,7 @@ test('travel allocation, set to first_site, reaches the worker home screen throu
     assert.equal(settings.travelAllocation, 'unallocated'); // default, unchanged behaviour
 
     await updateCompanySettings(db, {
+      ...OTHER_SETTINGS,
       companyId: fx.companyId,
       autoLunchEnabled: false,
       autoLunchThresholdMinutes: 300,
@@ -2652,6 +2777,198 @@ test('the missing clock-out sweep does not fire minutes into a legitimate overni
       email: noEmail,
     });
     assert.equal(pastClose.pushSent, 1, 'must nudge once genuinely past close plus grace');
+  } finally {
+    await close();
+  }
+});
+
+// --- roles -------------------------------------------------------------------
+
+test('an admin can promote somebody, and it is recorded as a human decision', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await setUserRole(db, {
+      companyId: fx.companyId,
+      targetAppUserId: fx.workerUserId,
+      role: 'supervisor',
+      actorUserId: fx.adminUserId,
+      reason: 'Running Crew A from Monday',
+    });
+
+    const assignments = await listRoleAssignments(db, { companyId: fx.companyId });
+    const changed = assignments.find((a) => a.appUserId === fx.workerUserId)!;
+    assert.equal(changed.role, 'supervisor');
+    // 'manual' is what protects it from the next org-chart sync.
+    assert.equal(changed.roleSource, 'manual');
+    assert.ok(changed.roleSetAt);
+  } finally {
+    await close();
+  }
+});
+
+test('a role change lands in the audit log with its actor and reason', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await setUserRole(db, {
+      companyId: fx.companyId,
+      targetAppUserId: fx.workerUserId,
+      role: 'supervisor',
+      actorUserId: fx.adminUserId,
+      reason: 'Running Crew A from Monday',
+    });
+
+    const entry = await one<{ actor_user_id: string; reason: string; after_value: { role: string } }>(
+      db,
+      `select actor_user_id, reason, after_value from audit_log
+        where table_name = 'app_user' and record_id = $1
+        order by created_at desc limit 1`,
+      [fx.workerUserId],
+    );
+    assert.equal(entry?.actor_user_id, fx.adminUserId);
+    assert.match(entry!.reason, /Crew A/);
+    assert.equal(entry!.after_value.role, 'supervisor');
+  } finally {
+    await close();
+  }
+});
+
+test('the last admin cannot be demoted, or the company locks itself out', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    // The fixture has exactly one admin. Demoting them leaves nobody who can
+    // promote anyone back, and the only way out is SQL against production.
+    await assert.rejects(
+      () =>
+        setUserRole(db, {
+          companyId: fx.companyId,
+          targetAppUserId: fx.adminUserId,
+          role: 'worker',
+          actorUserId: fx.adminUserId,
+          reason: 'Stepping back',
+        }),
+      /only admin left/,
+    );
+
+    const assignments = await listRoleAssignments(db, { companyId: fx.companyId });
+    assert.equal(assignments.find((a) => a.appUserId === fx.adminUserId)!.role, 'admin');
+  } finally {
+    await close();
+  }
+});
+
+test('a second admin makes the first one demotable', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await setUserRole(db, {
+      companyId: fx.companyId,
+      targetAppUserId: fx.supervisorUserId,
+      role: 'admin',
+      actorUserId: fx.adminUserId,
+      reason: 'Matt takes over the office',
+    });
+
+    await setUserRole(db, {
+      companyId: fx.companyId,
+      targetAppUserId: fx.adminUserId,
+      role: 'worker',
+      actorUserId: fx.supervisorUserId,
+      reason: 'Handing over',
+    });
+
+    const assignments = await listRoleAssignments(db, { companyId: fx.companyId });
+    assert.equal(assignments.find((a) => a.appUserId === fx.adminUserId)!.role, 'worker');
+    assert.equal(assignments.find((a) => a.appUserId === fx.supervisorUserId)!.role, 'admin');
+  } finally {
+    await close();
+  }
+});
+
+test('a role change needs a reason', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await assert.rejects(
+      () =>
+        setUserRole(db, {
+          companyId: fx.companyId,
+          targetAppUserId: fx.workerUserId,
+          role: 'supervisor',
+          actorUserId: fx.adminUserId,
+          reason: '   ',
+        }),
+      /reason is required/,
+    );
+  } finally {
+    await close();
+  }
+});
+
+test('the org chart sync promotes anyone Odoo says has reports', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    // The fixture supervisor has a direct report, but start them as a worker
+    // sourced from Odoo so the sync has something to correct.
+    await db.query(
+      `update app_user set role = 'worker', role_source = 'odoo' where id = $1`,
+      [fx.supervisorUserId],
+    );
+
+    const result = await syncRolesFromOdoo(db, { companyId: fx.companyId });
+    assert.equal(result.promoted, 1);
+
+    const assignments = await listRoleAssignments(db, { companyId: fx.companyId });
+    const supervisor = assignments.find((a) => a.appUserId === fx.supervisorUserId)!;
+    assert.equal(supervisor.role, 'supervisor');
+    assert.equal(supervisor.roleSource, 'odoo');
+  } finally {
+    await close();
+  }
+});
+
+test('the org chart sync never overrules a human, and never touches admin', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    // Set by hand: the supervisor is deliberately kept a worker despite having
+    // a report. That decision has to survive every future sync.
+    await setUserRole(db, {
+      companyId: fx.companyId,
+      targetAppUserId: fx.supervisorUserId,
+      role: 'worker',
+      actorUserId: fx.adminUserId,
+      reason: 'Off the tools, not running a crew this month',
+    });
+
+    const result = await syncRolesFromOdoo(db, { companyId: fx.companyId });
+    assert.ok(result.skippedManual >= 1);
+
+    const assignments = await listRoleAssignments(db, { companyId: fx.companyId });
+    assert.equal(assignments.find((a) => a.appUserId === fx.supervisorUserId)!.role, 'worker');
+    // Admin is company-wide payroll authority; Odoo models nothing that means
+    // that, so a sync must never grant or remove it.
+    assert.equal(assignments.find((a) => a.appUserId === fx.adminUserId)!.role, 'admin');
+  } finally {
+    await close();
+  }
+});
+
+test('a role cannot be changed across companies', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    const other = await one<{ id: string }>(
+      db,
+      `insert into company (name) values ('Someone Else Scaffolding') returning id`,
+      [],
+    );
+    await assert.rejects(
+      () =>
+        setUserRole(db, {
+          companyId: other!.id,
+          targetAppUserId: fx.workerUserId,
+          role: 'admin',
+          actorUserId: fx.adminUserId,
+          reason: 'Should never work',
+        }),
+      /not in this company/,
+    );
   } finally {
     await close();
   }

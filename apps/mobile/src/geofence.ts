@@ -48,6 +48,7 @@ export const GEOFENCE_TASK_NAME = 'skelclock-geofence-task';
 const TOGGLE_KEY = 'skelclock.geofence.enabled';
 const WATCHED_SITES_KEY = 'skelclock.geofence.watched_sites';
 const LAST_TRIGGER_KEY = 'skelclock.geofence.last_trigger';
+const PENDING_ARRIVALS_KEY = 'skelclock.geofence.pending_arrivals';
 
 /**
  * iOS hard-caps `startMonitoringForRegion` at 20 concurrent regions per app —
@@ -56,6 +57,14 @@ const LAST_TRIGGER_KEY = 'skelclock.geofence.last_trigger';
  * differently, so both use the conservative number.
  */
 const MAX_WATCHED_SITES = 20;
+
+/**
+ * Smallest region iOS will monitor dependably. Apple's own guidance puts the
+ * floor near 100m, because region monitoring runs off coarse cell and wifi
+ * position rather than GPS. Anything tighter is registered and then quietly
+ * never fires.
+ */
+const MIN_REGION_RADIUS_M = 100;
 
 /**
  * How close together two triggers of the same type, for the same job, have
@@ -73,6 +82,37 @@ interface WatchedSite {
   latitude: number;
   longitude: number;
   geofenceRadiusM: number;
+  /** Company policy in minutes, carried per job the same way operating hours
+   * are. 0 means the rule is off and an arrival clocks on immediately. */
+  minDwellMinutes: number;
+}
+
+/**
+ * An arrival that has been noticed but not yet acted on.
+ *
+ * Crossing a fence and turning up for work look identical at the boundary,
+ * and the boundary is the only moment iOS tells us about — region monitoring
+ * reports enter and exit, and has no notion of "stayed". So an arrival is
+ * parked here instead of being clocked immediately, and settled later once
+ * enough time has passed to tell a shift from a drive-past.
+ *
+ * `arrivedAt` is what eventually becomes the clock's device_time, not the
+ * moment it settles. Someone who arrives at 06:58 and whose phone only gets
+ * around to sending it at 07:04 started work at 06:58, and that is what
+ * payroll has to see.
+ */
+interface PendingArrival {
+  jobId: string;
+  /** Epoch ms, device clock. */
+  arrivedAt: number;
+  latitude: number;
+  longitude: number;
+  accuracyM: number | null;
+  candidateJobIds: string[];
+  minDwellMinutes: number;
+  /** The local notification asking the worker to open the app, so it can be
+   * cancelled if the arrival settles on its own first. */
+  reminderId: string | null;
 }
 
 Notifications.setNotificationHandler({
@@ -138,6 +178,38 @@ TaskManager.defineTask(GEOFENCE_TASK_NAME, async ({ data, error }) => {
   if (await recentlyTriggered(jobId, derivedEventType)) return;
   await recordTrigger(jobId, derivedEventType);
 
+  const dwellMinutes = resolvedSites[0]?.minDwellMinutes ?? 0;
+
+  if (derivedEventType === 'clock_in' && dwellMinutes > 0) {
+    // Park it. iOS tells us about the boundary and nothing else, so "did they
+    // stay" cannot be answered here — only later. settlePendingArrivals below
+    // is what turns this into a clock, and it runs on the next geofence
+    // callback, the next app open, or the reminder being tapped.
+    await holdArrival({
+      jobId,
+      arrivedAt: Date.now(),
+      latitude,
+      longitude,
+      accuracyM: fix.accuracyM,
+      candidateJobIds,
+      minDwellMinutes: dwellMinutes,
+      siteName: resolvedSites[0]?.siteName ?? null,
+    });
+    return;
+  }
+
+  if (derivedEventType === 'clock_out') {
+    // Left before the arrival ever became a clock: they did not turn up, they
+    // drove past. Drop it, and do not send a clock-off for a shift that never
+    // started.
+    const dropped = await discardPendingArrival(jobId);
+    if (dropped) return;
+  }
+
+  // Someone else's arrival may have come of age while this callback was
+  // running — the app is awake, which is the scarce thing here.
+  await settlePendingArrivals();
+
   const net = await NetInfo.fetch();
   const wasOffline = !(net.isConnected && net.isInternetReachable !== false);
 
@@ -160,6 +232,7 @@ TaskManager.defineTask(GEOFENCE_TASK_NAME, async ({ data, error }) => {
     wasOffline,
     deviceId: await deviceId(),
     candidateJobIds: candidateJobIds.length > 1 ? candidateJobIds : null,
+    insideSince: null,
   });
 
   // Best-effort immediate send; if it fails the event stays queued and the
@@ -183,12 +256,21 @@ async function notify(args: {
   const ambiguous = candidateJobIds.length > 1;
 
   if (autoConfirmed) {
+    // The time is the thing a worker checks. A clock they did not press has to
+    // say when it happened, or the only way to know whether the app caught the
+    // right moment is to open it — and a notification that has to be opened to
+    // be useful is a notification that failed. It is also what makes a wrong
+    // one arguable: "it says 6:42, I was still driving" is a correction the
+    // office can act on.
+    const at = new Date();
+    const stamp = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+
     // Never fires when ambiguous - shouldAutoConfirmGeofence server-side
     // refuses whenever candidateJobIds carries more than one entry.
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: arrived ? "You're clocked in" : "You're clocked out",
-        body: `Automatically ${arrived ? 'clocked in at' : 'clocked out from'} ${siteName}. Open SkelClock if that's not right.`,
+        title: arrived ? `Clocked in at ${stamp}` : `Clocked off at ${stamp}`,
+        body: `${siteName} — done automatically. Open SkelClock if that's not right.`,
       },
       trigger: null,
     });
@@ -204,6 +286,144 @@ async function notify(args: {
     },
     trigger: null,
   });
+}
+
+// --- held arrivals ----------------------------------------------------------
+
+async function getPendingArrivals(): Promise<PendingArrival[]> {
+  const raw = await AsyncStorage.getItem(PENDING_ARRIVALS_KEY);
+  return raw ? (JSON.parse(raw) as PendingArrival[]) : [];
+}
+
+async function setPendingArrivals(list: PendingArrival[]): Promise<void> {
+  if (list.length === 0) await AsyncStorage.removeItem(PENDING_ARRIVALS_KEY);
+  else await AsyncStorage.setItem(PENDING_ARRIVALS_KEY, JSON.stringify(list));
+}
+
+/**
+ * Notice an arrival without acting on it, and tell the worker what will
+ * happen.
+ *
+ * The notification is not decoration. The phone cannot promise to wake itself
+ * in five minutes — iOS decides that — so the honest thing is to say the clock
+ * is coming and give the worker a way to make it happen now by opening the
+ * app. Silence here would look exactly like the feature being broken.
+ */
+async function holdArrival(
+  arrival: Omit<PendingArrival, 'reminderId'> & { siteName: string | null },
+): Promise<void> {
+  const { siteName, ...rest } = arrival;
+  const existing = await getPendingArrivals();
+  // Already holding this one: the first arrival time is the true one, so a
+  // second boundary crossing at the fence edge must not push it later.
+  if (existing.some((a) => a.jobId === arrival.jobId)) return;
+
+  const at = new Date(arrival.arrivedAt);
+  const stamp = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+
+  let reminderId: string | null = null;
+  try {
+    reminderId = await Notifications.scheduleNotificationAsync({
+      content: {
+        title: `Arrived at ${siteName ?? 'your job site'}`,
+        body: `You'll be clocked on from ${stamp} once you've been here ${arrival.minDwellMinutes} minutes. Open SkelClock to do it now.`,
+      },
+      trigger: { seconds: Math.max(arrival.minDwellMinutes * 60, 60) } as never,
+    });
+  } catch {
+    // A missing notification permission must not cost the clock itself.
+  }
+
+  await setPendingArrivals([...existing, { ...rest, reminderId }]);
+}
+
+/** Drop a held arrival — they left before it counted. Returns whether there
+ * was one, which is what tells a clock-out apart from a drive-past. */
+async function discardPendingArrival(jobId: string): Promise<boolean> {
+  const existing = await getPendingArrivals();
+  const match = existing.find((a) => a.jobId === jobId);
+  if (!match) return false;
+
+  if (match.reminderId) {
+    await Notifications.cancelScheduledNotificationAsync(match.reminderId).catch(() => undefined);
+  }
+  await setPendingArrivals(existing.filter((a) => a.jobId !== jobId));
+  return true;
+}
+
+/**
+ * Turn arrivals that have served their time into real clock events.
+ *
+ * Safe to call from anywhere and as often as anything likes — it is how the
+ * app gets a second look at the problem, and there is no other. Called from
+ * the geofence task, and from the app coming to the foreground.
+ *
+ * An arrival that has not yet served its time is simply left alone; one that
+ * has is enqueued stamped with when it *started*, not with now.
+ */
+export async function settlePendingArrivals(): Promise<void> {
+  const pending = await getPendingArrivals();
+  if (pending.length === 0) return;
+
+  const employeeId = (await getSession())?.employeeId ?? null;
+  if (!employeeId) return;
+
+  const now = Date.now();
+  const ready = pending.filter((a) => now - a.arrivedAt >= a.minDwellMinutes * 60_000);
+  if (ready.length === 0) return;
+
+  const net = await NetInfo.fetch();
+  const wasOffline = !(net.isConnected && net.isInternetReachable !== false);
+  const store = await SqliteQueueStore.open();
+  const queue = new EventQueue(store, new ApiClient(accessToken));
+  const device = await deviceId();
+  const sites = await getWatchedSites();
+
+  for (const arrival of ready) {
+    await queue.enqueue({
+      idempotencyKey: newIdempotencyKey(device),
+      employeeId,
+      eventType: 'clock_in',
+      // When they got here, not when the phone got around to it.
+      deviceTime: new Date(arrival.arrivedAt).toISOString(),
+      jobId: arrival.jobId,
+      workActivityId: null,
+      latitude: arrival.latitude,
+      longitude: arrival.longitude,
+      gpsAccuracyM: arrival.accuracyM,
+      outsideReason: null,
+      clockMethod: 'auto_geofence',
+      wasOffline,
+      deviceId: device,
+      candidateJobIds: arrival.candidateJobIds.length > 1 ? arrival.candidateJobIds : null,
+      // The server re-checks this against its own copy of the policy. The
+      // phone holding the event is what makes the wait happen; it is not what
+      // decides the event is trustworthy.
+      insideSince: new Date(arrival.arrivedAt).toISOString(),
+    });
+
+    if (arrival.reminderId) {
+      await Notifications.cancelScheduledNotificationAsync(arrival.reminderId).catch(
+        () => undefined,
+      );
+    }
+  }
+
+  await setPendingArrivals(pending.filter((a) => !ready.some((r) => r.jobId === a.jobId)));
+  await queue.flush().catch(() => undefined);
+
+  for (const arrival of ready) {
+    const at = new Date(arrival.arrivedAt);
+    const stamp = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+    const siteName = sites.find((sx) => sx.jobId === arrival.jobId)?.siteName ?? 'your job site';
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: `Clocked in at ${stamp}`,
+        body: `${siteName} — done automatically. Open SkelClock if that's not right.`,
+      },
+      trigger: null,
+    }).catch(() => undefined);
+  }
 }
 
 async function getWatchedSites(): Promise<WatchedSite[]> {
@@ -320,6 +540,7 @@ async function startWatchingJobs(jobs: JobOption[]): Promise<StartWatchingResult
           latitude: j.latitude,
           longitude: j.longitude,
           geofenceRadiusM: j.geofenceRadiusM,
+          minDwellMinutes: j.geofenceMinDwellMinutes,
         }),
       ),
     ),
@@ -331,7 +552,19 @@ async function startWatchingJobs(jobs: JobOption[]): Promise<StartWatchingResult
       identifier: j.id,
       latitude: j.latitude,
       longitude: j.longitude,
-      radius: j.geofenceRadiusM,
+      // Not the office's fence — the radius at which the OS agrees to wake us.
+      //
+      // iOS monitors regions off coarse cell and wifi position to keep the
+      // radio asleep, and stops firing reliably below about 100m. A site fenced
+      // at 10m for a small office building is a region iOS will mostly ignore,
+      // so the worker walks in and nothing happens at all — the failure is
+      // total and silent, which is the worst kind.
+      //
+      // Widening only changes when we are woken. The task re-evaluates the fix
+      // against each site's real geofenceRadiusM before it treats anyone as
+      // arrived, so a wake 60m from a 10m fence resolves to no candidate and
+      // no clock. Coarse trigger, exact decision.
+      radius: Math.max(j.geofenceRadiusM, MIN_REGION_RADIUS_M),
       notifyOnEnter: true,
       notifyOnExit: true,
     })),
@@ -346,4 +579,5 @@ export async function stopWatching(): Promise<void> {
     await Location.stopGeofencingAsync(GEOFENCE_TASK_NAME);
   }
   await AsyncStorage.removeItem(WATCHED_SITES_KEY);
+  await AsyncStorage.removeItem(PENDING_ARRIVALS_KEY);
 }

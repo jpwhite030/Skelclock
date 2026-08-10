@@ -17,9 +17,9 @@
           "location"
         ],
         "NSLocationWhenInUseUsageDescription": "SkelClock shows you on a map of your job site so you can see you are inside the site boundary before you clock on, and records where you were when you clocked on and off.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "While you are clocked on, SkelClock follows your location, including when the app is closed, so your site map stays live and your hours are matched to the right job. If you turn on auto-detect, it also watches for you arriving at or leaving a job site so it can clock you on or off, and anything it is not confident about still asks you to confirm. Tracking stops when you clock off, never runs between shifts, and your positions stay on this phone — only the location at the moment you clock on or off is sent to the office."
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "While you are clocked on, SkelClock follows your location, including when the app is closed, so your site map stays live and your hours are matched to the right job. If you turn on auto-detect, it also watches for you arriving at or leaving a job site so it can clock you on or off, and anything it is not confident about still asks you to confirm. Tracking stops when you clock off, never runs between shifts, and your positions stay on this phone \u2014 only the location at the moment you clock on or off is sent to the office."
       },
-      "buildNumber": "2"
+      "buildNumber": "6"
     },
     "android": {
       "package": "au.com.skelscaff.skelclock",
@@ -36,7 +36,7 @@
         "expo-location",
         {
           "locationWhenInUsePermission": "SkelClock shows you on a map of your job site so you can see you are inside the site boundary before you clock on, and records where you were when you clocked on and off.",
-          "locationAlwaysAndWhenInUsePermission": "While you are clocked on, SkelClock follows your location, including when the app is closed, so your site map stays live and your hours are matched to the right job. If you turn on auto-detect, it also watches for you arriving at or leaving a job site so it can clock you on or off, and anything it is not confident about still asks you to confirm. Tracking stops when you clock off, never runs between shifts, and your positions stay on this phone — only the location at the moment you clock on or off is sent to the office.",
+          "locationAlwaysAndWhenInUsePermission": "While you are clocked on, SkelClock follows your location, including when the app is closed, so your site map stays live and your hours are matched to the right job. If you turn on auto-detect, it also watches for you arriving at or leaving a job site so it can clock you on or off, and anything it is not confident about still asks you to confirm. Tracking stops when you clock off, never runs between shifts, and your positions stay on this phone \u2014 only the location at the moment you clock on or off is sent to the office.",
           "isIosBackgroundLocationEnabled": true,
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true

@@ -28,13 +28,15 @@ export async function GET(request: Request): Promise<Response> {
       site_hours_end: string | null;
       company_hours_start: string | null;
       company_hours_end: string | null;
+      geofence_min_dwell_minutes: number;
     }>(
       `select j.id, j.job_number, j.customer_name,
               s.name as site_name, s.address, s.latitude, s.longitude, s.geofence_radius_m,
               s.operating_hours_start as site_hours_start,
               s.operating_hours_end   as site_hours_end,
               c.operating_hours_start as company_hours_start,
-              c.operating_hours_end   as company_hours_end
+              c.operating_hours_end   as company_hours_end,
+              c.geofence_min_dwell_minutes
          from job j
          join company c on c.id = j.company_id
          left join site s on s.id = j.site_id
@@ -44,6 +46,9 @@ export async function GET(request: Request): Promise<Response> {
           and not exists (
             select 1 from employee_site_exclusion x
              where x.site_id = j.site_id and x.employee_id = $2
+               -- Lifted lockouts are kept as history (0008). Without this the
+               -- job stays hidden from the phone forever after an un-exclude.
+               and x.removed_at is null
           )
         order by j.job_number`,
       [caller.companyId, caller.employeeId],
@@ -66,6 +71,7 @@ export async function GET(request: Request): Promise<Response> {
           // so the phone can give the same answer at press time.
           operatingHoursStart: r.site_hours_start ?? r.company_hours_start,
           operatingHoursEnd: r.site_hours_end ?? r.company_hours_end,
+          geofenceMinDwellMinutes: r.geofence_min_dwell_minutes,
         })),
       ),
       { headers: { 'Cache-Control': 'no-store' } },

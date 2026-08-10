@@ -465,7 +465,15 @@ main.paper {
   transition: background-color 140ms var(--ease), border-color 140ms var(--ease);
 }
 .spec select option { background: var(--canvas-200); color: var(--bone); }
+/* The chevron is a select's affordance. On a date input it collided with the
+   native picker, and on a search box it promises a dropdown that is not
+   coming — so anything the user types into rather than picks from drops it,
+   and takes a text caret with it. */
 .spec input[type="date"] { padding-right: 4px; background-image: none; }
+.spec input[type="search"],
+.spec input[type="text"] {
+  padding-right: 4px; background-image: none; cursor: text; min-width: 22ch;
+}
 .spec select:hover, .spec input:hover {
   background-color: rgba(138,170,200,.07); border-color: var(--line-strong);
   border-bottom-color: var(--bone); }
@@ -553,6 +561,33 @@ main.paper {
   margin-bottom: var(--r-2); max-width: 62ch;
 }
 
+/*
+ * The full-width section container.
+ *
+ * `.card` above is the reading-width version, capped at 62ch because it holds
+ * sentences and form rows. This one holds tables and maps, which must not be
+ * capped — a timesheet column pushed out of a 62ch box is a column nobody can
+ * read.
+ *
+ * It was referenced by sites-map-loader.tsx long before it existed, quietly
+ * doing nothing, which is why the site sheet's sections ran together with no
+ * border and no space between them.
+ */
+.panel {
+  border: 1px solid var(--line-strong); padding: var(--r-2);
+  display: flex; flex-direction: column; gap: var(--r-4);
+  margin-bottom: var(--r-2);
+  /* Wide tables scroll inside their own panel. The page itself must never
+     scroll sideways. */
+  overflow-x: auto;
+}
+.panel > h2 { margin-bottom: var(--r-8); }
+.panel .sheet { min-width: 100%; }
+.panel.empty {
+  color: var(--faint); font: 400 13px/1.4 var(--font-mono);
+  align-items: center; justify-content: center; min-height: var(--r3);
+}
+
 .settings-form__row {
   display: flex; align-items: center; gap: var(--r-8);
   color: var(--muted); font: 500 12px/1.4 var(--font-mono);
@@ -563,6 +598,19 @@ main.paper {
   background: var(--canvas-200); border: 1px solid var(--line-strong); color: var(--bone);
   font: 500 13px var(--font-mono); padding: 4px 8px; min-height: 26px; width: 9ch;
 }
+/* Date and select were left on the browser's own controls, which on a dark
+   ground means a white box in the middle of the sheet. Same treatment as the
+   number and time inputs above; auto width because a weekday name and a date
+   do not fit in 9ch. */
+.settings-form__row input[type="date"],
+.settings-form__row select {
+  background: var(--canvas-200); border: 1px solid var(--line-strong); color: var(--bone);
+  font: 500 13px var(--font-mono); padding: 4px 8px; min-height: 26px;
+}
+.settings-form__row select option { background: var(--canvas-200); color: var(--bone); }
+.settings-form__row input[type="date"]:focus-visible,
+.settings-form__row select:focus-visible { border-color: var(--cad-yellow); outline: none; }
+
 .settings-form__row input[type="checkbox"],
 .settings-form__row input[type="radio"] { accent-color: var(--brand); }
 .settings-form__hint { display: block; color: var(--faint); font-size: 11px; margin-top: 2px; }
@@ -868,6 +916,8 @@ main.paper {
 .site-row-name {
   font: 500 13px/1.2 var(--font-mono); letter-spacing: .06em; color: var(--bone);
 }
+a.site-row-name { border-bottom: 1px solid var(--rule-steel); }
+a.site-row-name:hover { color: var(--cad-magenta); border-bottom-color: var(--cad-magenta); }
 .site-row-meta {
   font: 400 11px/1.4 var(--font-mono); letter-spacing: .04em; color: var(--faint);
 }
@@ -906,7 +956,146 @@ main.paper {
 .site-add__result:hover { background: var(--canvas); color: var(--bone); }
 .site-add__hint { font: 400 11px/1.4 var(--font-mono); color: var(--faint); }
 
-.sites-map-panel { overflow: hidden; border-left: 1px solid var(--line); }
+/* ============================================================================
+   SHT 08 — PROJECTS, and SHT 04a — SITE DETAIL
+   ========================================================================= */
+
+/* Cards, not rows: the questions about a job are not comparative, so there is
+   nothing to line up in columns. auto-fill rather than auto-fit so a single
+   card stays card-width instead of stretching across the whole sheet. */
+.job-grid {
+  display: grid; gap: var(--r-4);
+  grid-template-columns: repeat(auto-fill, minmax(var(--bay-3050), 1fr));
+}
+.job-card {
+  display: flex; flex-direction: column; gap: var(--r-8);
+  background: var(--canvas-100);
+  border: 1px solid var(--line);
+  /* The health colour reads down the edge, the way a status stripe does on a
+     drawing, rather than as a dot competing with the job number. */
+  border-left: 3px solid var(--line-strong);
+  padding: var(--r-4);
+}
+.job-card__head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--r-8); }
+.job-card__no {
+  font: 500 15px/1 var(--font-mono); letter-spacing: .06em; color: var(--bone);
+}
+.job-card__customer { font: 400 13px/1.3 var(--font-mono); color: var(--bone-700); }
+.job-card__site { font: 400 12px/1.4 var(--font-mono); color: var(--muted); }
+.job-card__site a { color: var(--steel-lit); border-bottom: 1px solid var(--rule-steel); }
+.job-card__site a:hover { color: var(--cad-magenta); border-bottom-color: var(--cad-magenta); }
+.job-card__addr { display: block; color: var(--faint); }
+.job-card__warn {
+  font: 400 12px/1.4 var(--font-mono); color: var(--cad-yellow);
+  border-left: 2px solid var(--cad-yellow); padding-left: var(--r-8);
+}
+/* A grid, so the four figures line up as a block rather than reflowing into a
+   ragged two-line label/value tangle at whatever width the card lands on. */
+.job-card__stats {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: var(--r-8); margin: 0;
+}
+.job-card__stat dt { color: var(--faint); }
+.job-card__stat dd {
+  margin: 0; font-size: 20px; color: var(--bone); white-space: nowrap;
+}
+.job-card__since {
+  margin-top: var(--r-8);
+  font: 400 10px/1 var(--font-mono); letter-spacing: .1em;
+  text-transform: uppercase; color: var(--faintest);
+}
+.job-card__foot {
+  display: flex; justify-content: space-between; flex-wrap: wrap; gap: var(--r-8);
+  border-top: 1px solid var(--line); padding-top: var(--r-8);
+  font: 400 11px/1.4 var(--font-mono); color: var(--faint);
+}
+
+.site-facts { display: flex; flex-wrap: wrap; gap: var(--r-2) var(--r); margin: 0; }
+.site-fact dt { color: var(--faint); }
+.site-fact dd { margin: 0; color: var(--bone); }
+
+/* A role is edited in place, so the row has to grow to hold a select, a
+   reason and two buttons without the table clipping them — which is what
+   `.sheet td` does to everything by default. */
+.role-cell { display: inline-flex; align-items: baseline; gap: var(--r-8); }
+.role-edit {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--r-8);
+  white-space: normal;
+}
+.role-edit select, .role-edit input {
+  background: var(--canvas); border: 1px solid var(--line-strong); color: var(--bone);
+  font: 500 12px var(--font-mono); padding: 3px 6px; min-height: 26px;
+}
+/* The reason ends up in the audit log and gets read back months later, so it
+   has to be wide enough to check before it is committed. */
+.role-edit input { min-width: 30ch; flex: 1 1 30ch; }
+.role-edit select:focus-visible, .role-edit input:focus-visible {
+  border-color: var(--cad-yellow); outline: none;
+}
+/* The cell being edited stops clipping; every other cell still does. */
+.sheet td:has(.role-edit) { white-space: normal; overflow: visible; }
+
+.role-sync {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--r-8);
+  margin: var(--r-2) 0; padding: var(--r-8);
+  border-left: 2px solid var(--line-strong);
+}
+
+/* Employee tabs reuse the site chip: same control, same job — a filter that
+   states its own count. Anchors rather than buttons, so the tab is a real URL
+   the office can bookmark or send to someone. */
+.emp-tabs {
+  display: flex; flex-wrap: wrap; gap: 2px;
+  margin: var(--r-2) 0 var(--r-4);
+}
+.emp-tabs .site-chip { text-decoration: none; }
+
+/* Legend and filter in one control — see the comment at its use site. */
+.site-filters {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--r-8);
+  padding: var(--r-8); border-bottom: 1px solid var(--line);
+}
+/* Each chip carries its own rule rather than the row painting a background
+   between them: the row wraps, and a background-as-separator paints the empty
+   tail of the last line as a stray grey block. */
+.site-filters__chips { display: flex; flex-wrap: wrap; gap: 2px; }
+.site-chip {
+  appearance: none; cursor: pointer;
+  display: inline-flex; align-items: center; gap: var(--r-4);
+  background: var(--canvas-200); color: var(--bone);
+  border: 1px solid var(--line);
+  padding: var(--r-4) var(--r-8);
+  font: 400 11px/1 var(--font-mono); letter-spacing: .04em; text-transform: uppercase;
+}
+.site-chip:hover { background: var(--canvas); }
+/* Switched off reads as switched off without going invisible — it still has to
+   be findable and clickable to turn back on. */
+.site-chip[data-off] { color: var(--faintest); }
+.site-chip[data-off] .site-chip__dot { background: var(--faintest) !important; }
+.site-chip__dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.site-chip__n { color: var(--faint); }
+.site-filters__follow { display: inline-flex; align-items: center; gap: var(--r-4); cursor: pointer; }
+
+.sites-map-panel { overflow: hidden; border-left: 1px solid var(--line); position: relative; }
+
+/* Basemap switch, over the map's top-left — clear of Leaflet's zoom control,
+   which owns the corner. */
+.sites-map-basemap {
+  position: absolute; z-index: 500; top: var(--r-8); left: 52px;
+  display: flex; gap: 2px;
+}
+/* Legible over whichever basemap is underneath, light or dark. */
+.sites-map-basemap .site-chip { box-shadow: 0 1px 3px rgb(0 0 0 / .35); }
+.sites-map-basemap .site-chip[data-off] { background: var(--canvas-100); }
+
+/* The address the register says is under a dragged pin. Yellow because it is
+   in hand: the pin has moved and the address has not been decided yet. */
+.site-add__prompt {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--r-4);
+  padding: var(--r-8); background: var(--canvas-200);
+  border-left: 3px solid var(--cad-yellow);
+  font: 400 12px/1.4 var(--font-mono); color: var(--bone);
+}
 
 /* Leaflet's own CSS assumes it is loaded before the map paints; make sure
    panes always have the size the container gives them. */
@@ -919,8 +1108,15 @@ main.paper {
    darkening keeps it from glaring in the middle of the rest of the dark UI
    without touching its hue, unlike the old invert-and-desaturate treatment
    this replaced (that only worked on flat-colour street tiles). Pins and
-   fences draw above this pane and are unaffected. */
-.leaflet-tile-pane {
+   fences draw above this pane and are unaffected.
+
+   Scoped to the aerial basemap on purpose. The NSW property map is a light
+   cartographic sheet whose whole job here is house numbers set in about eight
+   pixels, and dark numerals on a pale ground is the most legible way anyone
+   has found to draw those. Dimming it to match the surrounding UI would cost
+   exactly the thing it was added for, so it is left as its cartographer drew
+   it. */
+.sites-map-panel[data-basemap='aerial'] .leaflet-tile-pane {
   filter: brightness(.92);
 }
 .leaflet-container .leaflet-control-attribution {

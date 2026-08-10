@@ -160,6 +160,9 @@ export interface WorkingNowRow {
   crewName: string | null;
   jobId: string | null;
   jobNumber: string | null;
+  /** Which site this shift is on. The name is for reading; this is for
+   * joining — two sites can share a name, and one can be renamed. */
+  siteId: string | null;
   siteName: string | null;
   activityName: string | null;
   clockInTime: string | null;
@@ -234,9 +237,9 @@ export async function getWorkingNow(
       .find((e) => e.latitude != null && e.longitude != null);
 
     const job = current?.jobId
-      ? await one<{ job_number: string; site_name: string | null }>(
+      ? await one<{ job_number: string; site_id: string | null; site_name: string | null }>(
           db,
-          `select j.job_number, s.name as site_name
+          `select j.job_number, s.id as site_id, s.name as site_name
              from job j left join site s on s.id = j.site_id where j.id = $1`,
           [current.jobId],
         )
@@ -263,6 +266,7 @@ export async function getWorkingNow(
       crewName: r.crew_name,
       jobId: current?.jobId ?? null,
       jobNumber: job?.job_number ?? null,
+      siteId: job?.site_id ?? null,
       siteName: job?.site_name ?? null,
       activityName: activity?.name ?? null,
       clockInTime: clockIn?.deviceTime ?? null,

@@ -177,11 +177,54 @@ export function blocksClockIn(result: GeofenceResult): boolean {
  * skip a human — treat "unknown" the same as "too loose". */
 const AUTO_CONFIRM_MAX_ACCURACY_M = 30;
 
+/**
+ * Whether a worker has been inside the fence long enough to be believed.
+ *
+ * Crossing a fence and turning up for work are not the same event, and until
+ * this rule existed they were indistinguishable. Driving past a site on the
+ * highway, parking beside one to buy a coffee, or living two streets away and
+ * walking the dog all cross a boundary exactly the way arriving for a shift
+ * does. A minimum dwell is the only thing that separates them, and it is
+ * cheap: nobody who is actually starting work leaves within five minutes.
+ *
+ * Unknown arrival time fails, deliberately. This gates the *automatic* path,
+ * and the doctrine everywhere else in this file is that anything we are not
+ * sure about falls back to a human tap rather than guessing at someone's pay.
+ * A clock event carrying no arrival time is one we cannot judge, so we do not.
+ *
+ * Zero minutes disables the rule outright rather than being a special case
+ * every caller has to remember — a company that does not want it sets 0.
+ */
+export function meetsMinimumDwell(args: {
+  /** When the phone first saw itself inside this fence, in epoch ms. */
+  insideSinceMs: number | null;
+  nowMs: number;
+  minimumMinutes: number;
+}): boolean {
+  if (args.minimumMinutes <= 0) return true;
+  if (args.insideSinceMs == null) return false;
+
+  // A negative elapsed time means the device clock moved, or the arrival was
+  // stamped by a phone that disagrees with this one. Either way it is not
+  // evidence of having stayed anywhere, so it counts as no time at all.
+  const elapsedMs = args.nowMs - args.insideSinceMs;
+  if (elapsedMs < 0) return false;
+
+  return elapsedMs >= args.minimumMinutes * 60_000;
+}
+
 export interface AutoConfirmInput {
   insideGeofence: boolean | null;
   accuracyM: number | null;
   /** How many of the worker's assigned sites the fix fell inside. */
   candidateSiteCount: number;
+  /** When the phone first saw itself inside this fence, epoch ms. Null when
+   * the event did not carry one — an older client, or a manual clock. */
+  insideSinceMs?: number | null;
+  /** Company policy, in minutes. Omitted or 0 means the rule is off. */
+  minimumDwellMinutes?: number;
+  /** Evaluated against this instant, so the caller controls "now". */
+  nowMs?: number;
 }
 
 /**
@@ -189,15 +232,31 @@ export interface AutoConfirmInput {
  * clock immediately, skipping the tap-to-confirm step.
  *
  * Deliberately conservative, same spirit as shouldRaiseGeofenceException: tap
- * stays the fallback for anything this isn't sure about. Three ways to fail
- * the automatic path — a loose fix, landing outside the fence, or landing
- * inside more than one assigned site's fence at once (evaluateGeofence only
- * ever checks one site, so the caller resolves ambiguity before calling this;
- * candidateSiteCount > 1 means it could not).
+ * stays the fallback for anything this isn't sure about. Four ways to fail
+ * the automatic path — a loose fix, landing outside the fence, landing inside
+ * more than one assigned site's fence at once (evaluateGeofence only ever
+ * checks one site, so the caller resolves ambiguity before calling this;
+ * candidateSiteCount > 1 means it could not), or not having stayed.
+ *
+ * Failing here does not refuse the clock. It sends it back to tap-to-confirm,
+ * which is the whole design: the worker who really did just arrive taps once,
+ * and the driver-by never gets a live clock they did not ask for.
  */
 export function shouldAutoConfirmGeofence(input: AutoConfirmInput): boolean {
   if (input.candidateSiteCount > 1) return false;
   if (input.insideGeofence !== true) return false;
   if (input.accuracyM == null || input.accuracyM > AUTO_CONFIRM_MAX_ACCURACY_M) return false;
+
+  const minimumMinutes = input.minimumDwellMinutes ?? 0;
+  if (
+    !meetsMinimumDwell({
+      insideSinceMs: input.insideSinceMs ?? null,
+      nowMs: input.nowMs ?? Date.now(),
+      minimumMinutes,
+    })
+  ) {
+    return false;
+  }
+
   return true;
 }

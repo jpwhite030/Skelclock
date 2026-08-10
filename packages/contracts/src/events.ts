@@ -38,6 +38,10 @@ export const clockEventClientSchema = z.object({
   deviceId: z.string().nullable().optional(),
   /** Auto-geofence only: every assigned job whose fence the fix fell inside. */
   candidateJobIds: z.array(z.string()).nullable().optional(),
+  /** Auto-geofence only: when the phone first saw itself inside this fence.
+   * Optional so an older build keeps working — it just never satisfies the
+   * minimum-dwell rule and falls back to tap-to-confirm. */
+  insideSince: z.string().nullable().optional(),
 });
 
 export const ingestRequestSchema = z.object({

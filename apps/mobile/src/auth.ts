@@ -189,6 +189,30 @@ export async function signInAsDemoWorker(mobile: string): Promise<void> {
   await verifyOtp(mobile, '');
 }
 
+/**
+ * Email and password, for when the number-plus-code door is shut.
+ *
+ * A worker's number is the right way in and stays the default — it is the one
+ * thing they always have and never forget. But phone sign-in needs an SMS
+ * provider enabled on the Supabase project, and until someone turns it on the
+ * app cannot sign anyone in at all: signInWithOtp fails with
+ * phone_provider_disabled before it even looks at the number. That leaves a
+ * build that installs and does nothing, which is the worst thing to hand a
+ * tester.
+ *
+ * Same door the office dashboard uses, and the same silence about which half
+ * was wrong.
+ */
+export async function signInWithEmail(email: string, password: string): Promise<void> {
+  await SecureStore.deleteItemAsync(PROFILE_KEY).catch(() => undefined);
+
+  const { error } = await requireSupabase().auth.signInWithPassword({
+    email: email.trim(),
+    password,
+  });
+  if (error) throw new Error('That email and password did not match.');
+}
+
 export async function verifyOtp(phone: string, token: string): Promise<void> {
   // Whoever signed in last must not leak into this session.
   await SecureStore.deleteItemAsync(PROFILE_KEY).catch(() => undefined);

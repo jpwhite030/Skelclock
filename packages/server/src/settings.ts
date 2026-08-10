@@ -8,11 +8,11 @@
  * through, rather than each place guessing at company policy on its own.
  */
 
-import type { TravelAllocation } from '@skelclock/core';
+import type { PayrollPeriodKind, TravelAllocation } from '@skelclock/core';
 
 import { oneOrFail, type Db } from './db.js';
 
-export type { TravelAllocation };
+export type { PayrollPeriodKind, TravelAllocation };
 
 export class SettingsError extends Error {
   constructor(message: string) {
@@ -31,6 +31,14 @@ export interface CompanySettings {
   /** "HH:MM:SS", local to `timezone`. Null on either end means no restriction. */
   operatingHoursStart: string | null;
   operatingHoursEnd: string | null;
+  /** How long a worker must stay inside a fence before an automatic arrival is
+   * trusted enough to become a live clock. 0 switches the rule off. */
+  geofenceMinDwellMinutes: number;
+  payrollPeriod: PayrollPeriodKind;
+  /** ISO day numbering: 1 = Monday … 7 = Sunday. */
+  payrollWeekStartsOn: number;
+  /** `YYYY-MM-DD` in a period-one week. Required when fortnightly. */
+  payrollAnchorDate: string | null;
 }
 
 function toSettings(r: {
@@ -42,6 +50,10 @@ function toSettings(r: {
   travel_allocation: string;
   operating_hours_start: string | null;
   operating_hours_end: string | null;
+  geofence_min_dwell_minutes: number;
+  payroll_period: string;
+  payroll_week_starts_on: number;
+  payroll_anchor_date: string | Date | null;
 }): CompanySettings {
   return {
     companyId: r.id,
@@ -52,7 +64,20 @@ function toSettings(r: {
     travelAllocation: r.travel_allocation as TravelAllocation,
     operatingHoursStart: r.operating_hours_start,
     operatingHoursEnd: r.operating_hours_end,
+    geofenceMinDwellMinutes: r.geofence_min_dwell_minutes,
+    payrollPeriod: r.payroll_period as PayrollPeriodKind,
+    payrollWeekStartsOn: r.payroll_week_starts_on,
+    // `date` comes back as a Date from node-postgres and as a string from the
+    // in-process demo database. Everything downstream compares YYYY-MM-DD
+    // strings, so it is normalised here rather than at each call site.
+    payrollAnchorDate: toIsoDate(r.payroll_anchor_date),
   };
+}
+
+function toIsoDate(value: string | Date | null): string | null {
+  if (value == null) return null;
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return value.slice(0, 10);
 }
 
 /** segments.ts options derived from company payroll settings — shared by
@@ -83,7 +108,9 @@ export async function getCompanySettings(db: Db, companyId: string): Promise<Com
     db,
     `select id, timezone, auto_lunch_enabled, auto_lunch_threshold_minutes,
             auto_lunch_duration_minutes, travel_allocation,
-            operating_hours_start, operating_hours_end
+            operating_hours_start, operating_hours_end,
+            geofence_min_dwell_minutes, payroll_period,
+            payroll_week_starts_on, payroll_anchor_date
        from company where id = $1`,
     [companyId],
     'Company',
@@ -100,6 +127,10 @@ export interface UpdateCompanySettingsInput {
   /** "HH:MM" from a <input type="time">; null clears the restriction. */
   operatingHoursStart: string | null;
   operatingHoursEnd: string | null;
+  geofenceMinDwellMinutes: number;
+  payrollPeriod: PayrollPeriodKind;
+  payrollWeekStartsOn: number;
+  payrollAnchorDate: string | null;
 }
 
 export async function updateCompanySettings(
@@ -112,6 +143,20 @@ export async function updateCompanySettings(
   if ((input.operatingHoursStart == null) !== (input.operatingHoursEnd == null)) {
     throw new SettingsError('Operating hours need both a start and an end, or neither.');
   }
+  if (input.geofenceMinDwellMinutes < 0 || input.geofenceMinDwellMinutes > 120) {
+    throw new SettingsError('Minimum time on site must be between 0 and 120 minutes.');
+  }
+  if (input.payrollWeekStartsOn < 1 || input.payrollWeekStartsOn > 7) {
+    throw new SettingsError('The payroll week has to start on a day of the week.');
+  }
+  // A fortnightly company with no anchor cannot say which fortnight it is in,
+  // and every screen would answer the question differently. Caught here so the
+  // form gets a sentence rather than a constraint violation.
+  if (input.payrollPeriod === 'fortnightly' && !input.payrollAnchorDate) {
+    throw new SettingsError(
+      'A fortnightly payroll needs a start date, so everyone agrees which fortnight is which.',
+    );
+  }
 
   const row = await oneOrFail<Parameters<typeof toSettings>[0]>(
     db,
@@ -121,11 +166,17 @@ export async function updateCompanySettings(
             auto_lunch_duration_minutes = $4,
             travel_allocation = $5,
             operating_hours_start = $6,
-            operating_hours_end = $7
+            operating_hours_end = $7,
+            geofence_min_dwell_minutes = $8,
+            payroll_period = $9,
+            payroll_week_starts_on = $10,
+            payroll_anchor_date = $11
       where id = $1
       returning id, timezone, auto_lunch_enabled, auto_lunch_threshold_minutes,
-                auto_lunch_duration_minutes, travel_allocation,
-                operating_hours_start, operating_hours_end`,
+            auto_lunch_duration_minutes, travel_allocation,
+            operating_hours_start, operating_hours_end,
+            geofence_min_dwell_minutes, payroll_period,
+            payroll_week_starts_on, payroll_anchor_date`,
     [
       input.companyId,
       input.autoLunchEnabled,
@@ -134,6 +185,13 @@ export async function updateCompanySettings(
       input.travelAllocation,
       input.operatingHoursStart,
       input.operatingHoursEnd,
+      input.geofenceMinDwellMinutes,
+      input.payrollPeriod,
+      input.payrollWeekStartsOn,
+      // Weekly companies keep no anchor: leaving a stale one behind means
+      // switching back to fortnightly silently resumes an old cadence nobody
+      // chose.
+      input.payrollPeriod === 'fortnightly' ? input.payrollAnchorDate : null,
     ],
     'Company',
   );

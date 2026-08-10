@@ -23,7 +23,7 @@ import {
 } from '@skelclock/core';
 
 import { one, withTransaction, type Db } from './db.js';
-import { checkOperatingHours } from './settings.js';
+import { checkOperatingHours, getCompanySettings } from './settings.js';
 import { isEmployeeExcludedFromSite } from './sites.js';
 import { rebuildTimesheet } from './timesheet.js';
 
@@ -350,12 +350,24 @@ async function ingestOne(
         event.clockMethod === 'auto_geofence' && candidateCount > 1
           ? event.candidateJobIds!
           : null;
+      // Minimum dwell is company policy, so it is read here rather than
+      // trusted from the phone — the client stamps when it arrived, the server
+      // decides whether that was long enough.
+      const { geofenceMinDwellMinutes } = await getCompanySettings(tx, companyId);
+      const insideSinceMs = event.insideSince ? Date.parse(event.insideSince) : NaN;
+
       const autoConfirmed =
         event.clockMethod === 'auto_geofence' &&
         shouldAutoConfirmGeofence({
           insideGeofence,
           accuracyM: event.gpsAccuracyM ?? null,
           candidateSiteCount: candidateCount,
+          insideSinceMs: Number.isNaN(insideSinceMs) ? null : insideSinceMs,
+          // Both device times. An event that sat in the offline queue for six
+          // hours must not be credited with six hours of standing on site,
+          // which is what using the server clock here would do.
+          nowMs: Date.parse(event.deviceTime),
+          minimumDwellMinutes: geofenceMinDwellMinutes,
         });
       const isSuggested = event.clockMethod === 'auto_geofence' && !autoConfirmed;
 

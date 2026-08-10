@@ -72,7 +72,12 @@ export class ApiClient implements Transport {
 
   private async request<T>(
     path: string,
-    schema: z.ZodType<T>,
+    // Output-typed on purpose. The bare `z.ZodType<T>` forces input and output
+    // to be the same type, which any schema carrying a `.default()` breaks —
+    // and a default is how the contract tolerates a server older than this
+    // build (see geofenceMinDwellMinutes in packages/contracts/src/jobs.ts).
+    // What a caller gets back is what parse produced, so T is the output.
+    schema: z.ZodType<T, z.ZodTypeDef, unknown>,
     init: RequestInit = {},
   ): Promise<T> {
     const token = await this.getToken();
@@ -143,6 +148,7 @@ export class ApiClient implements Transport {
           wasOffline: e.wasOffline,
           deviceId: e.deviceId,
           candidateJobIds: e.candidateJobIds,
+          insideSince: e.insideSince ?? null,
         })),
       }),
     });

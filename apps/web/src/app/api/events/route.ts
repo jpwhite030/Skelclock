@@ -82,6 +82,7 @@ export async function POST(request: Request): Promise<Response> {
       clockMethod,
       wasOffline: Boolean(raw.wasOffline),
       deviceId: (raw.deviceId as string | null) ?? null,
+      insideSince: typeof raw.insideSince === 'string' ? raw.insideSince : null,
       actingUserId: caller.appUserId,
       candidateJobIds: Array.isArray(raw.candidateJobIds)
         ? (raw.candidateJobIds as unknown[]).filter((v): v is string => typeof v === 'string')

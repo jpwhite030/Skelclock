@@ -16,6 +16,23 @@ try {
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Hand the NEXT_PUBLIC_ vars to the browser bundle explicitly.
+  //
+  // process.loadEnvFile() above puts them in process.env, which is enough for
+  // everything running on the server — that is why the API routes could reach
+  // Supabase while the login page could not. Client-side inlining is a
+  // separate mechanism: Next substitutes NEXT_PUBLIC_* at compile time from
+  // the .env files it finds in this app's own directory, and never looks at a
+  // root .env or at anything this config put in process.env. Without this the
+  // browser gets `undefined` for both, createBrowserClient throws on the first
+  // keystroke of a sign-in, and the button appears to do nothing at all — no
+  // error, no network request, no way to tell a wrong password from a broken
+  // page. Which is precisely what happened.
+  env: {
+    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+  },
+
   // The workspace packages ship TypeScript source rather than a build step, so
   // Next has to compile them the same way it compiles the app.
   transpilePackages: ['@skelclock/contracts', '@skelclock/core', '@skelclock/odoo', '@skelclock/server'],
