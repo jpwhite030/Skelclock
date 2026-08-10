@@ -735,7 +735,12 @@ export function SitesMap({
                   style={{ background: STATUS[status].colour }}
                   aria-hidden="true"
                 />
-                <span className="site-row-name">{site.name}</span>
+                {/* The row name is the way in to the site's own sheet. It was
+                    the only thing on this screen that looked clickable and
+                    was not. */}
+                <a className="site-row-name" href={`/sites/${site.id}`}>
+                  {site.name}
+                </a>
                 {(status === 'moved' || status === 'unplaced') && (
                   <span className="mk mk-setout">{STATUS[status].label}</span>
                 )}

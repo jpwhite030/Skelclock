@@ -27,6 +27,7 @@ const PAGES = [
   { path: '/sync', name: 'odoo-sync' },
   { path: '/settings', name: 'settings' },
   { path: '/employees', name: 'employees' },
+  { path: '/projects', name: 'projects' },
 ] as const;
 
 const VIEWPORTS = [

@@ -465,7 +465,15 @@ main.paper {
   transition: background-color 140ms var(--ease), border-color 140ms var(--ease);
 }
 .spec select option { background: var(--canvas-200); color: var(--bone); }
+/* The chevron is a select's affordance. On a date input it collided with the
+   native picker, and on a search box it promises a dropdown that is not
+   coming — so anything the user types into rather than picks from drops it,
+   and takes a text caret with it. */
 .spec input[type="date"] { padding-right: 4px; background-image: none; }
+.spec input[type="search"],
+.spec input[type="text"] {
+  padding-right: 4px; background-image: none; cursor: text; min-width: 22ch;
+}
 .spec select:hover, .spec input:hover {
   background-color: rgba(138,170,200,.07); border-color: var(--line-strong);
   border-bottom-color: var(--bone); }
@@ -551,6 +559,33 @@ main.paper {
   border: 1px solid var(--line-strong); padding: var(--r-2);
   display: flex; flex-direction: column; gap: var(--r-8);
   margin-bottom: var(--r-2); max-width: 62ch;
+}
+
+/*
+ * The full-width section container.
+ *
+ * `.card` above is the reading-width version, capped at 62ch because it holds
+ * sentences and form rows. This one holds tables and maps, which must not be
+ * capped — a timesheet column pushed out of a 62ch box is a column nobody can
+ * read.
+ *
+ * It was referenced by sites-map-loader.tsx long before it existed, quietly
+ * doing nothing, which is why the site sheet's sections ran together with no
+ * border and no space between them.
+ */
+.panel {
+  border: 1px solid var(--line-strong); padding: var(--r-2);
+  display: flex; flex-direction: column; gap: var(--r-4);
+  margin-bottom: var(--r-2);
+  /* Wide tables scroll inside their own panel. The page itself must never
+     scroll sideways. */
+  overflow-x: auto;
+}
+.panel > h2 { margin-bottom: var(--r-8); }
+.panel .sheet { min-width: 100%; }
+.panel.empty {
+  color: var(--faint); font: 400 13px/1.4 var(--font-mono);
+  align-items: center; justify-content: center; min-height: var(--r3);
 }
 
 .settings-form__row {
@@ -881,6 +916,8 @@ main.paper {
 .site-row-name {
   font: 500 13px/1.2 var(--font-mono); letter-spacing: .06em; color: var(--bone);
 }
+a.site-row-name { border-bottom: 1px solid var(--rule-steel); }
+a.site-row-name:hover { color: var(--cad-magenta); border-bottom-color: var(--cad-magenta); }
 .site-row-meta {
   font: 400 11px/1.4 var(--font-mono); letter-spacing: .04em; color: var(--faint);
 }
@@ -918,6 +955,64 @@ main.paper {
 }
 .site-add__result:hover { background: var(--canvas); color: var(--bone); }
 .site-add__hint { font: 400 11px/1.4 var(--font-mono); color: var(--faint); }
+
+/* ============================================================================
+   SHT 08 — PROJECTS, and SHT 04a — SITE DETAIL
+   ========================================================================= */
+
+/* Cards, not rows: the questions about a job are not comparative, so there is
+   nothing to line up in columns. auto-fill rather than auto-fit so a single
+   card stays card-width instead of stretching across the whole sheet. */
+.job-grid {
+  display: grid; gap: var(--r-4);
+  grid-template-columns: repeat(auto-fill, minmax(var(--bay-3050), 1fr));
+}
+.job-card {
+  display: flex; flex-direction: column; gap: var(--r-8);
+  background: var(--canvas-100);
+  border: 1px solid var(--line);
+  /* The health colour reads down the edge, the way a status stripe does on a
+     drawing, rather than as a dot competing with the job number. */
+  border-left: 3px solid var(--line-strong);
+  padding: var(--r-4);
+}
+.job-card__head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--r-8); }
+.job-card__no {
+  font: 500 15px/1 var(--font-mono); letter-spacing: .06em; color: var(--bone);
+}
+.job-card__customer { font: 400 13px/1.3 var(--font-mono); color: var(--bone-700); }
+.job-card__site { font: 400 12px/1.4 var(--font-mono); color: var(--muted); }
+.job-card__site a { color: var(--steel-lit); border-bottom: 1px solid var(--rule-steel); }
+.job-card__site a:hover { color: var(--cad-magenta); border-bottom-color: var(--cad-magenta); }
+.job-card__addr { display: block; color: var(--faint); }
+.job-card__warn {
+  font: 400 12px/1.4 var(--font-mono); color: var(--cad-yellow);
+  border-left: 2px solid var(--cad-yellow); padding-left: var(--r-8);
+}
+/* A grid, so the four figures line up as a block rather than reflowing into a
+   ragged two-line label/value tangle at whatever width the card lands on. */
+.job-card__stats {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: var(--r-8); margin: 0;
+}
+.job-card__stat dt { color: var(--faint); }
+.job-card__stat dd {
+  margin: 0; font-size: 20px; color: var(--bone); white-space: nowrap;
+}
+.job-card__since {
+  margin-top: var(--r-8);
+  font: 400 10px/1 var(--font-mono); letter-spacing: .1em;
+  text-transform: uppercase; color: var(--faintest);
+}
+.job-card__foot {
+  display: flex; justify-content: space-between; flex-wrap: wrap; gap: var(--r-8);
+  border-top: 1px solid var(--line); padding-top: var(--r-8);
+  font: 400 11px/1.4 var(--font-mono); color: var(--faint);
+}
+
+.site-facts { display: flex; flex-wrap: wrap; gap: var(--r-2) var(--r); margin: 0; }
+.site-fact dt { color: var(--faint); }
+.site-fact dd { margin: 0; color: var(--bone); }
 
 /* Employee tabs reuse the site chip: same control, same job — a filter that
    states its own count. Anchors rather than buttons, so the tab is a real URL

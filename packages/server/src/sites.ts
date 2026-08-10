@@ -46,8 +46,8 @@ export async function listSites(db: Db, args: { companyId: string }): Promise<Si
             s.operating_hours_start, s.operating_hours_end,
             count(j.id) filter (where j.status in ('active', 'on_hold')) as job_count
        from site s
-       left join job j on j.site_id = s.id
-      where s.company_id = $1
+       left join job j on j.site_id = s.id and j.archived_at is null
+      where s.company_id = $1 and s.archived_at is null
       group by s.id
       order by s.name`,
     [args.companyId],
@@ -321,5 +321,150 @@ export async function updateSiteLocation(
     latitude: row.latitude,
     longitude: row.longitude,
     geofenceRadiusM: row.geofence_radius_m,
+  };
+}
+
+// --- one site, in full -------------------------------------------------------
+
+export interface SiteDetailJob {
+  id: string;
+  jobNumber: string;
+  customerName: string | null;
+  status: string;
+}
+
+export interface SiteDetailExclusion {
+  id: string;
+  employeeName: string;
+  reason: string;
+  createdAt: string;
+}
+
+export interface SiteDetail extends SiteSummary {
+  jobs: SiteDetailJob[];
+  exclusions: SiteDetailExclusion[];
+  /** Distinct people with attendance here in the last fortnight. */
+  peopleRecently: number;
+  /** Distinct days with attendance here in the last fortnight. */
+  daysRecently: number;
+  /** Paid minutes booked to this site's jobs in the last fortnight. */
+  minutesRecently: number;
+  lastActivityAt: string | null;
+}
+
+/**
+ * Everything about one site on one screen.
+ *
+ * The list view answers "where are my sites"; this answers "what is going on
+ * at this one", which is a different question and was previously only
+ * answerable by cross-referencing three screens. Null when the id is not this
+ * company's — the company check is the tenancy boundary, not decoration.
+ */
+export async function getSiteDetail(
+  db: Db,
+  args: { companyId: string; siteId: string; now?: Date },
+): Promise<SiteDetail | null> {
+  const now = args.now ?? new Date();
+  const since = new Date(now.getTime() - 14 * 86_400_000).toISOString();
+
+  const site = await one<{
+    id: string;
+    name: string;
+    address: string | null;
+    latitude: number | null;
+    longitude: number | null;
+    geofence_radius_m: number;
+    operating_hours_start: string | null;
+    operating_hours_end: string | null;
+    job_count: string;
+    people_recent: string;
+    days_recent: string;
+    minutes_recent: string | null;
+    last_activity_at: Date | string | null;
+  }>(
+    db,
+    `select s.id, s.name, s.address, s.latitude, s.longitude, s.geofence_radius_m,
+            s.operating_hours_start, s.operating_hours_end,
+            (select count(*) from job j
+              where j.site_id = s.id and j.status = 'active') as job_count,
+            (select count(distinct ae.employee_id) from attendance_event ae
+               join job j on j.id = ae.job_id
+              where j.site_id = s.id and ae.voided_at is null
+                and ae.device_time >= $3) as people_recent,
+            (select count(distinct ae.device_time::date) from attendance_event ae
+               join job j on j.id = ae.job_id
+              where j.site_id = s.id and ae.voided_at is null
+                and ae.device_time >= $3) as days_recent,
+            (select coalesce(sum(ts.minutes), 0) from time_segment ts
+               join job j on j.id = ts.job_id
+              where j.site_id = s.id and ts.is_paid and ts.start_time >= $3) as minutes_recent,
+            (select max(ae.device_time) from attendance_event ae
+               join job j on j.id = ae.job_id
+              where j.site_id = s.id and ae.voided_at is null) as last_activity_at
+       from site s
+      where s.id = $1 and s.company_id = $2 and s.archived_at is null`,
+    [args.siteId, args.companyId, since],
+  );
+  if (!site) return null;
+
+  const { rows: jobs } = await db.query<{
+    id: string;
+    job_number: string;
+    customer_name: string | null;
+    status: string;
+  }>(
+    `select id, job_number, customer_name, status::text as status
+       from job where site_id = $1 and archived_at is null
+      order by status, job_number`,
+    [args.siteId],
+  );
+
+  const { rows: exclusions } = await db.query<{
+    id: string;
+    full_name: string;
+    reason: string;
+    created_at: Date | string;
+  }>(
+    `select x.id, e.full_name, x.reason, x.created_at
+       from employee_site_exclusion x
+       join employee e on e.id = x.employee_id
+      where x.site_id = $1 and x.removed_at is null
+      order by e.full_name`,
+    [args.siteId],
+  );
+
+  const lastActivityAt =
+    site.last_activity_at instanceof Date
+      ? site.last_activity_at.toISOString()
+      : site.last_activity_at
+        ? String(site.last_activity_at)
+        : null;
+
+  return {
+    id: site.id,
+    name: site.name,
+    address: site.address,
+    latitude: site.latitude,
+    longitude: site.longitude,
+    geofenceRadiusM: site.geofence_radius_m,
+    jobCount: Number(site.job_count),
+    operatingHoursStart: site.operating_hours_start,
+    operatingHoursEnd: site.operating_hours_end,
+    jobs: jobs.map((j) => ({
+      id: j.id,
+      jobNumber: j.job_number,
+      customerName: j.customer_name,
+      status: j.status,
+    })),
+    exclusions: exclusions.map((x) => ({
+      id: x.id,
+      employeeName: x.full_name,
+      reason: x.reason,
+      createdAt: x.created_at instanceof Date ? x.created_at.toISOString() : String(x.created_at),
+    })),
+    peopleRecently: Number(site.people_recent),
+    daysRecently: Number(site.days_recent),
+    minutesRecently: Number(site.minutes_recent ?? 0),
+    lastActivityAt,
   };
 }
