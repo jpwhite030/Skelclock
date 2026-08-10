@@ -15,6 +15,14 @@ const SitesMap = dynamic(() => import('./sites-map').then((m) => m.SitesMap), {
   loading: () => <div className="panel empty">Loading map…</div>,
 });
 
-export function SitesMapLoader({ sites, canEdit }: { sites: SiteSummary[]; canEdit: boolean }) {
-  return <SitesMap sites={sites} canEdit={canEdit} />;
+export function SitesMapLoader({
+  sites,
+  canEdit,
+  crewOnSite,
+}: {
+  sites: SiteSummary[];
+  canEdit: boolean;
+  crewOnSite: Record<string, number>;
+}) {
+  return <SitesMap sites={sites} canEdit={canEdit} crewOnSite={crewOnSite} />;
 }

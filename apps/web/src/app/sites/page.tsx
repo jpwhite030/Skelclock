@@ -10,7 +10,7 @@
  * does before building — marking on the ground where every standard lands.
  */
 
-import { listSiteExclusions, listSites } from '@skelclock/server';
+import { getWorkingNow, listSiteExclusions, listSites } from '@skelclock/server';
 
 import { db } from '../../lib/db';
 import { getDashboardSession } from '../../lib/session';
@@ -27,13 +27,24 @@ export default async function SitesPage() {
   const sites = await listSites(db, { companyId: session.companyId });
   const canEdit = session.role === 'admin' || session.role === 'supervisor';
 
-  const [exclusions, employees] = await Promise.all([
+  // Who is standing on each site right now, so the map can colour it. Counted
+  // from getWorkingNow rather than a query of its own: "on shift" is decided by
+  // the state machine in TypeScript, not by SQL, and a second implementation
+  // here would be free to disagree with the Working now sheet about who is at
+  // work — which is the kind of disagreement nobody ever tracks down.
+  const [exclusions, employees, working] = await Promise.all([
     listSiteExclusions(db, { companyId: session.companyId }),
     db.query<{ id: string; full_name: string }>(
       'select id, full_name from employee where company_id = $1 and active order by full_name',
       [session.companyId],
     ),
+    getWorkingNow(db, { companyId: session.companyId }),
   ]);
+
+  const crewOnSite: Record<string, number> = {};
+  for (const row of working) {
+    if (row.siteId) crewOnSite[row.siteId] = (crewOnSite[row.siteId] ?? 0) + 1;
+  }
 
   const placed = sites.filter((s) => s.latitude != null && s.longitude != null).length;
   const unplaced = sites.length - placed;
@@ -78,7 +89,7 @@ export default async function SitesPage() {
         </span>
       </div>
 
-      <SitesMapLoader sites={sites} canEdit={canEdit} />
+      <SitesMapLoader sites={sites} canEdit={canEdit} crewOnSite={crewOnSite} />
 
       <SiteAccessPanel
         sites={sites}

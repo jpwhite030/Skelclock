@@ -41,12 +41,47 @@ function pinIcon(color: string): L.DivIcon {
 }
 
 /* SETOUT legend, not stock swatches: steel is the recorded colour of the gear
-   and marks a fence that is set; yellow means "in hand" — moved, not saved. */
+   and marks a fence that is set; yellow means "in hand" — moved, or owed work;
+   green means boards down, the crew is on it. */
 const STEEL = '#8aaac8';
 const IN_HAND = '#ffcf2e';
+const ON_SITE = '#3ee08a';
+const QUIET = '#6a655c';
 
-const SAVED_ICON = pinIcon(STEEL);
-const DIRTY_ICON = pinIcon(IN_HAND);
+/**
+ * What a site is doing, in the order that decides its colour.
+ *
+ * Derived, not stored — there is no status column, and there should not be
+ * one. Every value here is a fact the system already knows, so a status can
+ * never drift out of step with the thing it describes.
+ *
+ *   moved     the pin has been dragged and not saved. First, because it is
+ *             the only one describing unsaved work in this browser tab.
+ *   unplaced  no pin at all. Yellow: the fence cannot watch a site that has
+ *             no centre, so this one is in the office's hands.
+ *   crewed    somebody is clocked on there right now.
+ *   active    has live jobs, nobody on it this minute.
+ *   quiet     placed, no active jobs. Not a problem — just not today's work.
+ */
+export type SiteStatus = 'moved' | 'unplaced' | 'crewed' | 'active' | 'quiet';
+
+const STATUS: Record<SiteStatus, { label: string; colour: string }> = {
+  moved: { label: 'Moved', colour: IN_HAND },
+  unplaced: { label: 'No pin', colour: IN_HAND },
+  crewed: { label: 'On site', colour: ON_SITE },
+  active: { label: 'Active', colour: STEEL },
+  quiet: { label: 'Quiet', colour: QUIET },
+};
+
+/** The order the filter chips appear in — what needs attention first. */
+const STATUS_ORDER: SiteStatus[] = ['crewed', 'active', 'quiet', 'unplaced'];
+
+const ICONS: Record<string, L.DivIcon> = {
+  [STEEL]: pinIcon(STEEL),
+  [IN_HAND]: pinIcon(IN_HAND),
+  [ON_SITE]: pinIcon(ON_SITE),
+  [QUIET]: pinIcon(QUIET),
+};
 
 const DEFAULT_CENTER: LatLngExpression = [-34.4248, 150.8931]; // Wollongong — SkelScaff's patch
 
@@ -195,7 +230,16 @@ function nameFromAddress(label: string): string {
   return label.split(',')[0]?.trim() ?? label;
 }
 
-export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: boolean }) {
+export function SitesMap({
+  sites,
+  canEdit,
+  crewOnSite = {},
+}: {
+  sites: SiteSummary[];
+  canEdit: boolean;
+  /** siteId -> how many people are clocked on there right now. */
+  crewOnSite?: Record<string, number>;
+}) {
   const [drafts, setDrafts] = useState<Record<string, Draft>>(() => toDrafts(sites));
 
   /**
@@ -245,6 +289,65 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
   const onView = useCallback((centre: L.LatLng, bounds: L.LatLngBounds) => {
     setView({ centre, bounds });
   }, []);
+
+  /** Which statuses the list is showing. All on until the office narrows it. */
+  const [shown, setShown] = useState<Set<SiteStatus>>(() => new Set(STATUS_ORDER));
+  /** Scan the map and read the list beside it: pan, and the list follows. */
+  const [followMap, setFollowMap] = useState(true);
+
+  const statusOf = useCallback(
+    (site: SiteSummary): SiteStatus => {
+      const draft = drafts[site.id];
+      if (draft?.dirty) return 'moved';
+      if (!draft) return 'unplaced';
+      if ((crewOnSite[site.id] ?? 0) > 0) return 'crewed';
+      return site.jobCount > 0 ? 'active' : 'quiet';
+    },
+    [drafts, crewOnSite],
+  );
+
+  /**
+   * The list, narrowed to what is being looked at.
+   *
+   * Two rules that are easy to get wrong and both cost the office something:
+   *
+   * A site with no pin has no coordinates, so it can never be "in the view"
+   * and the map filter would hide it forever. Those are precisely the sites
+   * that need doing, so they are never hidden by `followMap` — only by
+   * unticking "No pin" deliberately.
+   *
+   * "Moved" is not a filter chip. It is a transient state of this browser tab,
+   * and filtering unsaved work out of the list is how unsaved work gets lost.
+   * A moved site always shows.
+   */
+  const visible = useMemo(() => {
+    return sites.filter((site) => {
+      const status = statusOf(site);
+      if (status === 'moved') return true;
+      if (!shown.has(status)) return false;
+      if (!followMap || status === 'unplaced') return true;
+      const draft = drafts[site.id];
+      if (!draft || !view) return true;
+      return view.bounds.contains([draft.latitude, draft.longitude]);
+    });
+  }, [sites, statusOf, shown, followMap, view, drafts]);
+
+  const counts = useMemo(() => {
+    const out = {} as Record<SiteStatus, number>;
+    for (const key of STATUS_ORDER) out[key] = 0;
+    out.moved = 0;
+    for (const site of sites) out[statusOf(site)] += 1;
+    return out;
+  }, [sites, statusOf]);
+
+  const toggleStatus = (status: SiteStatus) => {
+    setShown((prev) => {
+      const next = new Set(prev);
+      if (next.has(status)) next.delete(status);
+      else next.add(status);
+      return next;
+    });
+  };
 
   const center = useMemo<LatLngExpression>(() => {
     const first = Object.values(drafts)[0];
@@ -576,15 +679,74 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
           </div>
         )}
 
-        {sites.map((site) => {
+        {/*
+          The legend and the filter are the same control. Reading "On site 2"
+          and clicking it to see only those two is one gesture, and it keeps
+          the colours on the map explained without a separate key nobody reads.
+        */}
+        <div className="site-filters">
+          <div className="site-filters__chips">
+            {STATUS_ORDER.map((status) => (
+              <button
+                key={status}
+                className="site-chip"
+                data-off={shown.has(status) ? undefined : ''}
+                aria-pressed={shown.has(status)}
+                onClick={() => toggleStatus(status)}
+              >
+                <span
+                  className="site-chip__dot"
+                  style={{ background: STATUS[status].colour }}
+                  aria-hidden="true"
+                />
+                {STATUS[status].label}
+                <span className="site-chip__n">{counts[status]}</span>
+              </button>
+            ))}
+          </div>
+          <label className="site-filters__follow lbl">
+            <input
+              type="checkbox"
+              checked={followMap}
+              onChange={(e) => setFollowMap(e.target.checked)}
+            />
+            Only what is on the map
+          </label>
+          {/*
+            Say what is being withheld. A filtered list that looks like the
+            whole list is how someone concludes a site was never created.
+          */}
+          {visible.length < sites.length && (
+            <span className="lbl" style={{ color: 'var(--faint)' }}>
+              {sites.length - visible.length} hidden of {sites.length}
+            </span>
+          )}
+        </div>
+
+        {visible.map((site) => {
           const draft = drafts[site.id];
           const result = results[site.id];
+          const status = statusOf(site);
           return (
             <div key={site.id} className="site-row" data-hold={draft?.dirty ? '' : undefined}>
               <div className="site-row-header">
+                <span
+                  className="site-chip__dot"
+                  style={{ background: STATUS[status].colour }}
+                  aria-hidden="true"
+                />
                 <span className="site-row-name">{site.name}</span>
-                {draft?.dirty && <span className="mk mk-setout">Moved</span>}
-                {!draft && <span className="mk mk-setout">No pin</span>}
+                {(status === 'moved' || status === 'unplaced') && (
+                  <span className="mk mk-setout">{STATUS[status].label}</span>
+                )}
+                {status === 'crewed' && (
+                  // "2 clocked on", not "2 on site" — the filter chip beside
+                  // this counts sites and the badge counts people, and two
+                  // numbers labelled the same way do not mean the same thing.
+                  <span className="mk mk-approved">
+                    {crewOnSite[site.id]} clocked on
+                  </span>
+                )}
               </div>
               {site.address && <div className="site-row-meta">{site.address}</div>}
               <div className="site-row-meta">
@@ -637,15 +799,23 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
             No sites yet. They arrive with the next job import from Odoo.
           </div>
         )}
+        {sites.length > 0 && visible.length === 0 && (
+          <div className="site-row site-row-meta">
+            Nothing matches. Pan the map, or turn a filter back on.
+          </div>
+        )}
       </div>
 
       <div className="sites-map-panel" data-basemap={basemap}>
-        <div className="sites-map-basemap">
+        {/* Same chip as the status filters — it is the same kind of control,
+            a segmented pick, and it should not look like a different one. */}
+        <div className="sites-map-basemap" role="group" aria-label="Basemap">
           {(Object.keys(BASEMAPS) as BasemapKey[]).map((key) => (
             <button
               key={key}
-              className="act"
-              data-busy={basemap === key ? '' : undefined}
+              className="site-chip"
+              data-off={basemap === key ? undefined : ''}
+              aria-pressed={basemap === key}
               onClick={() => setBasemap(key)}
             >
               {BASEMAPS[key].name}
@@ -674,7 +844,7 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
               />
               <Marker
                 position={[newSite.latitude, newSite.longitude]}
-                icon={DIRTY_ICON}
+                icon={ICONS[IN_HAND]}
                 draggable
                 eventHandlers={{
                   dragend: (e) => {
@@ -689,21 +859,26 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
           {sites.map((site) => {
             const draft = drafts[site.id];
             if (!draft) return null;
+            // Filtered out of the list, so filtered off the map too — the two
+            // have to agree or the list stops describing what you are looking
+            // at, which is the whole point of scanning them together.
+            if (!visible.some((v) => v.id === site.id)) return null;
             const position: LatLngExpression = [draft.latitude, draft.longitude];
+            const colour = STATUS[statusOf(site)].colour;
             return (
               <Fragment key={site.id}>
                 <Circle
                   center={position}
                   radius={draft.geofenceRadiusM}
                   pathOptions={{
-                    color: draft.dirty ? IN_HAND : STEEL,
+                    color: colour,
                     fillOpacity: 0.08,
                     weight: 1,
                   }}
                 />
                 <Marker
                   position={position}
-                  icon={draft.dirty ? DIRTY_ICON : SAVED_ICON}
+                  icon={ICONS[colour] ?? ICONS[STEEL]!}
                   draggable={canEdit}
                   eventHandlers={{
                     dragend: (e) => {

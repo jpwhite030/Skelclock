@@ -40,13 +40,80 @@ const VIEWPORTS = [
  * `playwright` package put them, so the install directory is resolved by hand.
  * Prefers a full chromium build over the headless shell — the shell renders
  * fonts differently, which is exactly what these screenshots are checking.
+ *
+ * Every platform lays this out differently, and the cache root moves too, so
+ * both are per-platform rather than one path with a swapped separator.
  */
-async function chromiumPath(): Promise<string | undefined> {
-  const root =
-    process.env.PLAYWRIGHT_BROWSERS_PATH ??
-    join(process.env.LOCALAPPDATA ?? '', 'ms-playwright');
+function browserRoot(): string {
+  if (process.env.PLAYWRIGHT_BROWSERS_PATH) return process.env.PLAYWRIGHT_BROWSERS_PATH;
+  if (process.platform === 'win32') return join(process.env.LOCALAPPDATA ?? '', 'ms-playwright');
+  if (process.platform === 'darwin') {
+    return join(process.env.HOME ?? '', 'Library', 'Caches', 'ms-playwright');
+  }
+  return join(process.env.HOME ?? '', '.cache', 'ms-playwright');
+}
 
+/** Where the executable sits inside one downloaded browser directory. */
+function executablesIn(dir: string): string[] {
+  if (process.platform === 'win32') {
+    return [
+      join(dir, 'chrome-win', 'chrome.exe'),
+      join(dir, 'chrome-win', 'headless_shell.exe'),
+    ];
+  }
+  if (process.platform === 'darwin') {
+    // Both architectures, because a machine can run either and the directory
+    // name is the only thing that says which was downloaded.
+    return ['arm64', 'x64'].flatMap((arch) => [
+      join(
+        dir,
+        `chrome-mac-${arch}`,
+        'Google Chrome for Testing.app',
+        'Contents',
+        'MacOS',
+        'Google Chrome for Testing',
+      ),
+      join(dir, 'chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
+      join(dir, `chrome-headless-shell-mac-${arch}`, 'chrome-headless-shell'),
+    ]);
+  }
+  return [
+    join(dir, 'chrome-linux', 'chrome'),
+    join(dir, 'chrome-linux', 'headless_shell'),
+    join(dir, 'chrome-headless-shell-linux64', 'chrome-headless-shell'),
+  ];
+}
+
+/** Installed browsers of last resort, when Playwright has downloaded none. */
+function systemBrowsers(): string[] {
+  if (process.platform === 'win32') {
+    return [
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+    ];
+  }
+  if (process.platform === 'darwin') {
+    return [
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      '/Applications/Chromium.app/Contents/MacOS/Chromium',
+      '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+    ];
+  }
+  return ['/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'];
+}
+
+async function chromiumPath(): Promise<string | undefined> {
+  const root = browserRoot();
   const { access } = await import('node:fs/promises');
+
+  const exists = async (exe: string) => {
+    try {
+      await access(exe);
+      return true;
+    } catch {
+      return false;
+    }
+  };
 
   try {
     const dirs = await readdir(root);
@@ -54,32 +121,16 @@ async function chromiumPath(): Promise<string | undefined> {
     const shell = dirs.filter((d) => /^chromium_headless_shell-\d+$/.test(d)).sort().reverse();
 
     for (const dir of [...full, ...shell]) {
-      for (const exe of [
-        join(root, dir, 'chrome-win', 'chrome.exe'),
-        join(root, dir, 'chrome-win', 'headless_shell.exe'),
-      ]) {
-        try {
-          await access(exe);
-          return exe;
-        } catch {
-          // try the next candidate
-        }
+      for (const exe of executablesIn(join(root, dir))) {
+        if (await exists(exe)) return exe;
       }
     }
   } catch {
-    // fall through to the system Chrome below
+    // fall through to an installed browser below
   }
 
-  for (const exe of [
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-  ]) {
-    try {
-      await access(exe);
-      return exe;
-    } catch {
-      // keep looking
-    }
+  for (const exe of systemBrowsers()) {
+    if (await exists(exe)) return exe;
   }
   return undefined;
 }
