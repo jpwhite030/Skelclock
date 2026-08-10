@@ -102,6 +102,10 @@ interface NewSiteDraft {
   geofenceRadiusM: number;
   hoursStart: string;
   hoursEnd: string;
+  /** Carried from the search so the panel can say the pin is a guess. */
+  precision: GeocodeResult['precision'];
+  /** True until the office drags the pin, which is what makes it real. */
+  pinUnconfirmed: boolean;
 }
 
 /** A short, human name from a Nominatim display_name — its first comma-
@@ -176,15 +180,26 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
       address: r.label,
       latitude: r.latitude,
       longitude: r.longitude,
-      geofenceRadiusM: 70,
+      // 70m is right for a pin on the property. Around a road centroid it is
+      // a trap: the pin can be hundreds of metres from the site, and the first
+      // anyone hears of it is a crew being refused their clock-on. So an
+      // inexact match opens wide, and tightening it is a deliberate act once
+      // the pin is where the gate actually is.
+      geofenceRadiusM: r.precision === 'address' ? 70 : 250,
       hoursStart: '',
       hoursEnd: '',
+      precision: r.precision,
+      pinUnconfirmed: r.precision !== 'address',
     });
     setSearchResults(null);
   };
 
   const moveNewSite = (lat: number, lng: number) => {
-    setNewSite((prev) => (prev ? { ...prev, latitude: lat, longitude: lng } : prev));
+    // Dragging the pin is the office saying where the site really is, so it
+    // clears the guess flag — that is the only thing that does.
+    setNewSite((prev) =>
+      prev ? { ...prev, latitude: lat, longitude: lng, pinUnconfirmed: false } : prev,
+    );
   };
 
   const saveNewSite = () => {
@@ -265,7 +280,23 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
                   <div className="site-add__results">
                     {searchResults.map((r, i) => (
                       <button key={i} className="site-add__result" onClick={() => pickResult(r)}>
-                        {r.label}
+                        <span>{r.label}</span>
+                        {/*
+                          Say outright when the geocoder only matched a road.
+                          The pin then sits somewhere along it — often hundreds
+                          of metres from the site — and a fence drawn around
+                          that will turn away the crew who actually turn up.
+                        */}
+                        {r.precision !== 'address' && (
+                          <span
+                            className="lbl"
+                            style={{ color: 'var(--cad-yellow)', marginLeft: '0.6em' }}
+                          >
+                            {r.precision === 'street'
+                              ? '— street only, drag the pin'
+                              : '— area only, drag the pin'}
+                          </span>
+                        )}
                       </button>
                     ))}
                   </div>
@@ -278,6 +309,24 @@ export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: bo
 
                 {newSite && (
                   <>
+                    {newSite.pinUnconfirmed && (
+                      <p
+                        className="lead"
+                        style={{
+                          color: 'var(--cad-yellow)',
+                          borderLeft: '3px solid var(--cad-yellow)',
+                          paddingLeft: '0.8em',
+                          maxWidth: '52ch',
+                        }}
+                      >
+                        The search only matched the{' '}
+                        {newSite.precision === 'street' ? 'street' : 'suburb'}, not a street
+                        number — this pin is a guess and could be a long way from the site.
+                        Drag it onto the gate, then set the fence. It is opened to{' '}
+                        {newSite.geofenceRadiusM}m until you do, so nobody gets turned away
+                        from a boundary drawn in the wrong place.
+                      </p>
+                    )}
                     <div className="correction-row__form">
                       <label className="lbl" style={{ flex: '1 1 100%' }}>
                         Site name
