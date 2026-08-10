@@ -24,6 +24,7 @@ const TABS = [
   { href: '/sites', label: 'Sites', sht: '04' },
   { href: '/sync', label: 'Odoo sync', sht: '05' },
   { href: '/settings', label: 'Settings', sht: '06' },
+  { href: '/employees', label: 'Employees', sht: '07' },
 ] as const;
 
 export function RailNav() {
