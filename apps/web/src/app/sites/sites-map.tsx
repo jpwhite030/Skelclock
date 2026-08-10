@@ -117,6 +117,31 @@ function nameFromAddress(label: string): string {
 
 export function SitesMap({ sites, canEdit }: { sites: SiteSummary[]; canEdit: boolean }) {
   const [drafts, setDrafts] = useState<Record<string, Draft>>(() => toDrafts(sites));
+
+  /**
+   * Take in sites that appeared after mount.
+   *
+   * The initialiser above runs once. Saving a new site calls revalidatePath,
+   * which re-renders the server component and hands down a longer `sites`
+   * prop — but useState ignores it, so the new site had a row in the list, a
+   * "No pin" badge, and nothing on the map. It had saved correctly every time;
+   * it just had no draft to draw from, and the only way to see it was a full
+   * page reload.
+   *
+   * Only ever adds. A draft already held here may carry an unsaved drag, and
+   * re-seeding from the server would throw that away mid-edit — which is the
+   * trap that makes "just re-run toDrafts" the wrong fix.
+   */
+  useEffect(() => {
+    setDrafts((prev) => {
+      const incoming = toDrafts(sites);
+      const missing = Object.keys(incoming).filter((id) => !(id in prev));
+      if (missing.length === 0) return prev;
+      const next = { ...prev };
+      for (const id of missing) next[id] = incoming[id]!;
+      return next;
+    });
+  }, [sites]);
   const [armedSiteId, setArmedSiteId] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [savingId, setSavingId] = useState<string | null>(null);
