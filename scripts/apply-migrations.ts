@@ -22,6 +22,18 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = join(HERE, '..', 'supabase', 'migrations');
 
 async function main(): Promise<void> {
+  // Read the root .env, the same one apps/web/next.config.mjs loads. Without
+  // this the error below told the truth about what to do and then ignored the
+  // result — you copy .env.example to .env, fill it in, and get the identical
+  // message back. loadEnvFile never overwrites a variable already set, so a
+  // DATABASE_URL exported in the shell or set in CI still wins.
+  try {
+    process.loadEnvFile(join(HERE, '..', '.env'));
+  } catch {
+    // No root .env. Fine — the value may be exported, and if it is not the
+    // check below says so.
+  }
+
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     console.error('DATABASE_URL is not set. Copy .env.example to .env and fill it in first.');
