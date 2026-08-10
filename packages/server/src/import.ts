@@ -101,7 +101,7 @@ export async function importJobs(
   },
 ): Promise<ImportResult> {
   const jobs = await adapter.fetchJobs({ limit: args.limit });
-  const radius = args.defaultGeofenceRadiusM ?? 200;
+  const radius = args.defaultGeofenceRadiusM ?? 70;
   const result: ImportResult = { created: 0, updated: 0, deactivated: 0, total: jobs.length };
 
   await withTransaction(

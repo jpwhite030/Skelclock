@@ -15,6 +15,8 @@
  * nineteen date blocks.
  */
 
+import Link from 'next/link';
+
 import { listTimesheets, type TimesheetRow } from '@skelclock/server';
 
 import { db } from '../../lib/db';
@@ -155,6 +157,11 @@ export default async function TimesheetsPage({
         </label>
 
         <span className="grow" />
+        {/* Same form, different destination: the export route receives exactly
+            the filters on screen, so the CSV is always the ledger being read. */}
+        <button type="submit" className="act" formAction="/timesheets/export">
+          Export CSV
+        </button>
         <button type="submit" className="btn">Apply</button>
       </form>
 
@@ -236,7 +243,9 @@ function Group({ group }: { group: EmployeeGroup }) {
       {group.rows.map((r) => (
         <tr key={r.id} data-breach={r.openExceptions > 0 ? '' : undefined}>
           <td>
-            {formatDate(r.workDate)}
+            <Link href={`/timesheets/${r.id}`} style={{ color: 'inherit', textDecoration: 'none' }}>
+              {formatDate(r.workDate)}
+            </Link>
             {r.openExceptions > 0 && (
               <span className="exc-flag" title={`${r.openExceptions} open exception(s)`}>
                 ▲{r.openExceptions}
@@ -246,7 +255,15 @@ function Group({ group }: { group: EmployeeGroup }) {
           <td>{r.jobNumbers.join(', ') || '—'}</td>
           <td className="num">{formatMinutes(r.totalShiftMinutes)}</td>
           <td className="num" style={{ color: 'var(--ink-faint)' }}>
-            {formatMinutes(r.totalBreakMinutes)}
+            {/* Mutually exclusive by construction: the auto-lunch only ever
+                applies to a day with no clocked break at all. */}
+            {r.autoLunchMinutes > 0 ? (
+              <span title="No break was clocked; unpaid lunch deducted automatically">
+                {r.autoLunchMinutes}m auto
+              </span>
+            ) : (
+              formatMinutes(r.totalBreakMinutes)
+            )}
           </td>
           <td className="num" style={{ fontWeight: 500, color: 'var(--ink)' }}>
             {r.paidHoursLabel}

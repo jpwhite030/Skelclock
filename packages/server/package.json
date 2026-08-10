@@ -9,6 +9,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@skelclock/contracts": "*",
     "@skelclock/core": "*",
     "@skelclock/odoo": "*"
   }

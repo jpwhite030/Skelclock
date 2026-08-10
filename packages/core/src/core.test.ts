@@ -1,7 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { distanceMetres, evaluateGeofence, shouldRaiseGeofenceException } from './geo.js';
+import {
+  bearingDegrees,
+  blocksClockIn,
+  distanceMetres,
+  evaluateGeofence,
+  shouldAutoConfirmGeofence,
+  shouldRaiseGeofenceException,
+} from './geo.js';
 import {
   applyTransition,
   currentShift,
@@ -11,6 +18,7 @@ import {
 import { buildSegments, formatMinutes } from './segments.js';
 import { detectExceptions } from './exceptions.js';
 import { isValidIdempotencyKey, newIdempotencyKey, syncJobKey } from './idempotency.js';
+import { isWithinOperatingHours, minutesSinceLocalMidnight } from './operating-hours.js';
 import type { StoredAttendanceEvent, WorkActivityRef } from './types.js';
 
 // --- helpers ---------------------------------------------------------------
@@ -65,6 +73,117 @@ test('distanceMetres is zero for identical points', () => {
   assert.equal(distanceMetres(p, p), 0);
 });
 
+test('bearingDegrees points to the four cardinals', () => {
+  const site = { latitude: -34.4248, longitude: 150.8931 }; // 14 Kembla Street
+
+  const north = bearingDegrees(site, { ...site, latitude: site.latitude + 0.01 });
+  const south = bearingDegrees(site, { ...site, latitude: site.latitude - 0.01 });
+  const east = bearingDegrees(site, { ...site, longitude: site.longitude + 0.01 });
+  const west = bearingDegrees(site, { ...site, longitude: site.longitude - 0.01 });
+
+  assert.ok(Math.abs(north - 0) < 1, `north was ${north.toFixed(1)}`);
+  assert.ok(Math.abs(south - 180) < 1, `south was ${south.toFixed(1)}`);
+  assert.ok(Math.abs(east - 90) < 1, `east was ${east.toFixed(1)}`);
+  assert.ok(Math.abs(west - 270) < 1, `west was ${west.toFixed(1)}`);
+});
+
+test('bearingDegrees is a compass bearing, not a flat arctangent', () => {
+  // Equal degree steps north and east. On a square lat/lng grid this would be
+  // exactly 45°; the real forward azimuth is east of that, because a degree of
+  // longitude is shorter than a degree of latitude this far south.
+  const site = { latitude: -34.4248, longitude: 150.8931 };
+  const b = bearingDegrees(site, {
+    latitude: site.latitude + 0.01,
+    longitude: site.longitude + 0.01,
+  });
+
+  assert.ok(b > 39 && b < 40, `expected ~39.5°, got ${b.toFixed(2)}°`);
+});
+
+test('bearingDegrees returns 0 for identical points rather than NaN', () => {
+  const p = { latitude: -34.4248, longitude: 150.8931 };
+  assert.equal(bearingDegrees(p, p), 0);
+});
+
+// --- the fence as a hard block -----------------------------------------------
+//
+// These guard the cases where refusing a clock-on would cost a worker a shift
+// for something that is not their fault. The positive case is one test; the
+// rest are all the ways someone must still get to work.
+
+const site = { latitude: -34.4248, longitude: 150.8931 };
+const fenceM = 200;
+
+/** Roughly `metres` due north of the site. 1 degree of latitude ~ 111,320m. */
+const northOf = (metres: number) => ({
+  latitude: site.latitude + metres / 111_320,
+  longitude: site.longitude,
+});
+
+test('blocksClockIn refuses a position confidently outside the fence', () => {
+  const result = evaluateGeofence({
+    position: northOf(600),
+    accuracyM: 10,
+    site,
+    radiusM: fenceM,
+  });
+
+  assert.equal(result.insideGeofence, false);
+  assert.equal(blocksClockIn(result), true);
+});
+
+test('blocksClockIn allows a worker inside the fence', () => {
+  const result = evaluateGeofence({
+    position: northOf(50),
+    accuracyM: 10,
+    site,
+    radiusM: fenceM,
+  });
+
+  assert.equal(blocksClockIn(result), false);
+});
+
+test('blocksClockIn does not refuse when there is no position at all', () => {
+  // A basement, a shed, a flat GPS, a refused permission. Unknown is not
+  // outside, and must never cost somebody a shift.
+  const result = evaluateGeofence({
+    position: null,
+    accuracyM: null,
+    site,
+    radiusM: fenceM,
+  });
+
+  assert.equal(result.insideGeofence, null);
+  assert.equal(blocksClockIn(result), false);
+});
+
+test('blocksClockIn does not refuse when the site has no coordinates yet', () => {
+  const result = evaluateGeofence({
+    position: northOf(5000),
+    accuracyM: 10,
+    site: null,
+    radiusM: fenceM,
+  });
+
+  assert.equal(result.insideGeofence, null);
+  assert.equal(blocksClockIn(result), false);
+});
+
+test('blocksClockIn does not refuse when GPS error bars reach the fence', () => {
+  // 260m out with 100m of error: the worker may well be standing inside it.
+  // This is the ordinary case on a scaffold deck, not an edge case.
+  const result = evaluateGeofence({
+    position: northOf(260),
+    accuracyM: 100,
+    site,
+    radiusM: fenceM,
+  });
+
+  assert.equal(result.insideGeofence, false);
+  assert.equal(result.withinAccuracyMargin, true);
+  assert.equal(blocksClockIn(result), false);
+});
+
 test('a worker standing on site is inside the fence', () => {
   const r = evaluateGeofence({
     position: { latitude: -33.8000, longitude: 151.2000 },
@@ -112,6 +231,76 @@ test('a job with no coordinates never raises a geofence exception', () => {
   assert.equal(r.insideGeofence, null);
   assert.equal(r.reason, 'no_site_position');
   assert.equal(shouldRaiseGeofenceException(r), false);
+});
+
+test('a tight fix comfortably inside the fence auto-confirms', () => {
+  assert.equal(
+    shouldAutoConfirmGeofence({ insideGeofence: true, accuracyM: 12, candidateSiteCount: 1 }),
+    true,
+  );
+});
+
+test('a loose fix never auto-confirms, even standing inside the fence', () => {
+  assert.equal(
+    shouldAutoConfirmGeofence({ insideGeofence: true, accuracyM: 45, candidateSiteCount: 1 }),
+    false,
+  );
+});
+
+test('a missing accuracy reading is treated as untrustworthy, not lucky', () => {
+  assert.equal(
+    shouldAutoConfirmGeofence({ insideGeofence: true, accuracyM: null, candidateSiteCount: 1 }),
+    false,
+  );
+});
+
+test('outside the fence never auto-confirms regardless of accuracy', () => {
+  assert.equal(
+    shouldAutoConfirmGeofence({ insideGeofence: false, accuracyM: 5, candidateSiteCount: 1 }),
+    false,
+  );
+});
+
+test('two candidate sites at once never auto-confirms, even with a perfect fix', () => {
+  assert.equal(
+    shouldAutoConfirmGeofence({ insideGeofence: true, accuracyM: 5, candidateSiteCount: 2 }),
+    false,
+  );
+});
+
+// --- operating hours (phone-side mirror of server checkOperatingHours) ------
+
+test('operating hours: inside a normal window is allowed, outside is not', () => {
+  const window = { start: '06:00:00', end: '18:00:00' };
+  assert.equal(isWithinOperatingHours(8 * 60, window), true);
+  assert.equal(isWithinOperatingHours(4 * 60, window), false);
+  // Start inclusive, end exclusive — same as the server's comparison.
+  assert.equal(isWithinOperatingHours(6 * 60, window), true);
+  assert.equal(isWithinOperatingHours(18 * 60, window), false);
+});
+
+test('operating hours: an overnight window wraps past midnight', () => {
+  const window = { start: '22:00', end: '06:00' };
+  assert.equal(isWithinOperatingHours(23 * 60, window), true);
+  assert.equal(isWithinOperatingHours(5 * 60, window), true);
+  assert.equal(isWithinOperatingHours(12 * 60, window), false);
+});
+
+test('operating hours: no window means no restriction', () => {
+  assert.equal(isWithinOperatingHours(3 * 60, { start: null, end: null }), true);
+  assert.equal(isWithinOperatingHours(3 * 60, { start: '06:00', end: null }), true);
+});
+
+test('operating hours: equal start and end is 24 hours, not permanently closed', () => {
+  const window = { start: '00:00', end: '00:00' };
+  assert.equal(isWithinOperatingHours(0, window), true);
+  assert.equal(isWithinOperatingHours(12 * 60, window), true);
+  assert.equal(isWithinOperatingHours(23 * 60 + 59, window), true);
+});
+
+test('minutesSinceLocalMidnight reads the device clock, not UTC', () => {
+  const d = new Date(2026, 7, 4, 6, 30); // constructed in local time on purpose
+  assert.equal(minutesSinceLocalMidnight(d), 6 * 60 + 30);
 });
 
 // --- state machine ---------------------------------------------------------
@@ -256,6 +445,64 @@ test('the brief\'s worked example produces three segments', () => {
   assert.equal(totals.totalBreakMinutes, 0);
 });
 
+test('travel allocation defaults to unallocated - the brief example is unaffected', () => {
+  const events = [
+    ev('clock_in', '2026-08-04T06:30:00+10:00', { jobId: 'job-1032', workActivityId: 'erect' }),
+    ev('job_change', '2026-08-04T09:00:00+10:00', { jobId: null, workActivityId: 'travel' }),
+    ev('job_change', '2026-08-04T09:30:00+10:00', { jobId: 'job-1041', workActivityId: 'modify' }),
+    ev('clock_out', '2026-08-04T14:30:00+10:00'),
+  ];
+  const { segments } = buildSegments(events, { activities: ACTIVITIES });
+  assert.equal(segments[1]!.jobId, null);
+});
+
+test('travel allocation can cost to the site just left', () => {
+  const events = [
+    ev('clock_in', '2026-08-04T06:30:00+10:00', { jobId: 'job-1032', workActivityId: 'erect' }),
+    ev('job_change', '2026-08-04T09:00:00+10:00', { jobId: null, workActivityId: 'travel' }),
+    ev('job_change', '2026-08-04T09:30:00+10:00', { jobId: 'job-1041', workActivityId: 'modify' }),
+    ev('clock_out', '2026-08-04T14:30:00+10:00'),
+  ];
+  const { segments } = buildSegments(events, {
+    activities: ACTIVITIES,
+    travelAllocation: 'first_site',
+  });
+  assert.equal(segments[1]!.segmentType, 'travel');
+  assert.equal(segments[1]!.jobId, 'job-1032');
+  // Neither neighbour segment is touched - only the travel segment moves.
+  assert.equal(segments[0]!.jobId, 'job-1032');
+  assert.equal(segments[2]!.jobId, 'job-1041');
+});
+
+test('travel allocation can cost to the site being travelled to', () => {
+  const events = [
+    ev('clock_in', '2026-08-04T06:30:00+10:00', { jobId: 'job-1032', workActivityId: 'erect' }),
+    ev('job_change', '2026-08-04T09:00:00+10:00', { jobId: null, workActivityId: 'travel' }),
+    ev('job_change', '2026-08-04T09:30:00+10:00', { jobId: 'job-1041', workActivityId: 'modify' }),
+    ev('clock_out', '2026-08-04T14:30:00+10:00'),
+  ];
+  const { segments } = buildSegments(events, {
+    activities: ACTIVITIES,
+    travelAllocation: 'second_site',
+  });
+  assert.equal(segments[1]!.jobId, 'job-1041');
+});
+
+test('travel at the very start of a shift stays unallocated - there is no first site', () => {
+  // e.g. a supervisor correction that opens the day already mid-travel.
+  const events = [
+    ev('clock_in', '2026-08-04T06:00:00Z', { jobId: null, workActivityId: 'travel' }),
+    ev('job_change', '2026-08-04T06:30:00Z', { jobId: 'job-1032', workActivityId: 'erect' }),
+    ev('clock_out', '2026-08-04T14:00:00Z'),
+  ];
+  const { segments } = buildSegments(events, {
+    activities: ACTIVITIES,
+    travelAllocation: 'first_site',
+  });
+  assert.equal(segments[0]!.segmentType, 'travel');
+  assert.equal(segments[0]!.jobId, null);
+});
+
 test('an unpaid break is excluded from paid hours but not from shift time', () => {
   const events = [
     ev('clock_in', '2026-08-04T06:00:00Z', { jobId: 'j1', workActivityId: 'erect' }),
@@ -322,6 +569,59 @@ test('forgetting to end a break still closes it at clock-out', () => {
   assert.equal(segments.length, 2);
   assert.equal(segments[1]!.segmentType, 'break');
   assert.equal(totals.totalBreakMinutes, 30);
+});
+
+test('a long shift with no break clocked gets an automatic unpaid lunch deducted', () => {
+  const events = [
+    ev('clock_in', '2026-08-04T06:00:00Z', { jobId: 'j1', workActivityId: 'erect' }),
+    ev('clock_out', '2026-08-04T14:00:00Z'), // 8h, no break
+  ];
+  const { totals } = buildSegments(events, {
+    activities: ACTIVITIES,
+    autoLunch: { thresholdMinutes: 300, durationMinutes: 30 },
+  });
+  assert.equal(totals.totalShiftMinutes, 480);
+  assert.equal(totals.autoLunchMinutes, 30);
+  assert.equal(totals.totalPaidMinutes, 450);
+});
+
+test('a shift under the auto-lunch threshold is not touched', () => {
+  const events = [
+    ev('clock_in', '2026-08-04T06:00:00Z', { jobId: 'j1', workActivityId: 'erect' }),
+    ev('clock_out', '2026-08-04T10:00:00Z'), // 4h
+  ];
+  const { totals } = buildSegments(events, {
+    activities: ACTIVITIES,
+    autoLunch: { thresholdMinutes: 300, durationMinutes: 30 },
+  });
+  assert.equal(totals.autoLunchMinutes, 0);
+  assert.equal(totals.totalPaidMinutes, 240);
+});
+
+test('a worker who already clocked a break is not also docked the automatic lunch', () => {
+  const events = [
+    ev('clock_in', '2026-08-04T06:00:00Z', { jobId: 'j1', workActivityId: 'erect' }),
+    ev('break_start', '2026-08-04T10:00:00Z'),
+    ev('break_end', '2026-08-04T10:15:00Z'), // a genuine but short break
+    ev('clock_out', '2026-08-04T14:00:00Z'), // 8h door to door, 15m of it unpaid break
+  ];
+  const { totals } = buildSegments(events, {
+    activities: ACTIVITIES,
+    autoLunch: { thresholdMinutes: 300, durationMinutes: 30 },
+  });
+  assert.equal(totals.autoLunchMinutes, 0);
+  assert.equal(totals.totalBreakMinutes, 15);
+  assert.equal(totals.totalPaidMinutes, 465); // 480 - 15, not also -30
+});
+
+test('auto-lunch is disabled by default', () => {
+  const events = [
+    ev('clock_in', '2026-08-04T06:00:00Z', { jobId: 'j1', workActivityId: 'erect' }),
+    ev('clock_out', '2026-08-04T14:00:00Z'),
+  ];
+  const { totals } = buildSegments(events, { activities: ACTIVITIES });
+  assert.equal(totals.autoLunchMinutes, 0);
+  assert.equal(totals.totalPaidMinutes, 480);
 });
 
 test('formatMinutes reads the same for workers and payroll', () => {

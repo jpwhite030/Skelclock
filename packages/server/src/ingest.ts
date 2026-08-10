@@ -13,15 +13,26 @@
 
 import {
   applyTransition,
+  blocksClockIn,
   deriveState,
   evaluateGeofence,
   isValidIdempotencyKey,
+  shouldAutoConfirmGeofence,
   type ClockEventInput,
   type StoredAttendanceEvent,
 } from '@skelclock/core';
 
 import { one, withTransaction, type Db } from './db.js';
+import { checkOperatingHours } from './settings.js';
+import { isEmployeeExcludedFromSite } from './sites.js';
 import { rebuildTimesheet } from './timesheet.js';
+
+/**
+ * How close together two auto-geofence triggers of the same type, for the
+ * same job, have to land before the second is treated as GPS bounce off a
+ * fence edge rather than a second real arrival/departure.
+ */
+const AUTO_GEOFENCE_DEBOUNCE_MS = 10 * 60_000;
 
 export interface IngestOptions {
   companyId: string;
@@ -34,7 +45,15 @@ export interface IngestOptions {
 }
 
 export type IngestOutcome =
-  | { status: 'created'; idempotencyKey: string; eventId: string; timesheetId: string; insideGeofence: boolean | null; distanceM: number | null }
+  | {
+      status: 'created';
+      idempotencyKey: string;
+      eventId: string;
+      timesheetId: string;
+      insideGeofence: boolean | null;
+      distanceM: number | null;
+      autoConfirmed: boolean;
+    }
   | { status: 'duplicate'; idempotencyKey: string; eventId: string }
   | { status: 'rejected'; idempotencyKey: string; code: string; message: string };
 
@@ -53,16 +72,19 @@ interface EmployeeRow {
 
 interface JobSiteRow {
   job_id: string;
+  site_id: string | null;
   latitude: number | null;
   longitude: number | null;
   geofence_radius_m: number | null;
+  operating_hours_start: string | null;
+  operating_hours_end: string | null;
 }
 
 export async function ingestEvents(db: Db, options: IngestOptions): Promise<IngestResult> {
   const {
     companyId,
     actingUserId = null,
-    defaultGeofenceRadiusM = 200,
+    defaultGeofenceRadiusM = 70,
     now = new Date(),
   } = options;
 
@@ -162,8 +184,35 @@ async function ingestOne(
     };
   }
 
-  // --- state machine -------------------------------------------------------
   const priorEvents = await loadRecentEvents(db, employee.id, event.deviceTime);
+
+  // --- debounce (auto-geofence only) ----------------------------------------
+  // GPS bouncing right at a fence edge can retrigger the OS region callback
+  // several times in a row. Folding into the existing row — rather than
+  // creating a second one — is exactly what "duplicate" already means to the
+  // queue: silent, no retry, nothing for the worker to dismiss.
+  //
+  // Checked before the state machine, deliberately: a confident bounce (high
+  // accuracy, auto-confirmed) is exactly the case that has already moved the
+  // worker's state — orderedLiveEvents does not skip it the way it skips a
+  // still-suggested event. Checking the state machine first would reject the
+  // bounce as "already clocked in" before this debounce ever ran, turning a
+  // fence-edge wobble into a worker-visible error banner nobody caused.
+  if (event.clockMethod === 'auto_geofence') {
+    const recentSame = priorEvents.find(
+      (e) =>
+        e.clockMethod === 'auto_geofence' &&
+        e.eventType === event.eventType &&
+        e.jobId === (event.jobId ?? null) &&
+        Math.abs(Date.parse(event.deviceTime) - Date.parse(e.deviceTime)) <=
+          AUTO_GEOFENCE_DEBOUNCE_MS,
+    );
+    if (recentSame) {
+      return { status: 'duplicate', idempotencyKey: key, eventId: recentSame.id };
+    }
+  }
+
+  // --- state machine -------------------------------------------------------
   const state = deriveState(priorEvents);
   const transition = applyTransition(state, event.eventType);
 
@@ -176,14 +225,16 @@ async function ingestOne(
     };
   }
 
-  // --- geofence ------------------------------------------------------------
+  // --- site: unknown-job, hard exclusion, geofence --------------------------
   let insideGeofence: boolean | null = null;
   let distanceM: number | null = null;
+  let site: JobSiteRow | null = null;
 
   if (event.jobId) {
-    const site = await one<JobSiteRow>(
+    site = await one<JobSiteRow>(
       db,
-      `select j.id as job_id, s.latitude, s.longitude, s.geofence_radius_m
+      `select j.id as job_id, s.id as site_id, s.latitude, s.longitude,
+              s.geofence_radius_m, s.operating_hours_start, s.operating_hours_end
          from job j left join site s on s.id = j.site_id
         where j.id = $1 and j.company_id = $2`,
       [event.jobId, companyId],
@@ -194,6 +245,18 @@ async function ingestOne(
         idempotencyKey: key,
         code: 'unknown_job',
         message: 'That job is not available to this company.',
+      };
+    }
+
+    // "They live next door" — a hard stop, every clock method, not just
+    // auto-detect. No override: removing the exclusion row is the only way
+    // back in, so this never silently defers to a supervisor's own clock.
+    if (site.site_id && (await isEmployeeExcludedFromSite(db, { employeeId: employee.id, siteId: site.site_id }))) {
+      return {
+        status: 'rejected',
+        idempotencyKey: key,
+        code: 'site_excluded',
+        message: 'This employee is not able to clock in at this site.',
       };
     }
 
@@ -211,6 +274,58 @@ async function ingestOne(
     });
     insideGeofence = result.insideGeofence;
     distanceM = result.distanceM;
+
+    // Confidently outside the fence refuses a clock-on — blocksClockIn's own
+    // doc comment calls this "the one rule in the system that can stop
+    // someone starting work." The phone already refuses to even queue a press
+    // that fails this same test (apps/mobile/src/useClock.ts), but the server
+    // is the actual trust boundary: a request that skips the app entirely — a
+    // scripted client, a modified build — must not be able to grant itself a
+    // clock the honest app would have refused. Never gates clock_out, and
+    // never applies when a person is deciding on someone else's behalf (crew
+    // clock, a missed-time entry) — same reasoning as the operating-hours
+    // bypass just below.
+    if (
+      event.eventType === 'clock_in' &&
+      (event.clockMethod === 'manual' || event.clockMethod === 'auto_geofence') &&
+      blocksClockIn(result)
+    ) {
+      return {
+        status: 'rejected',
+        idempotencyKey: key,
+        code: 'outside_geofence',
+        message:
+          distanceM != null
+            ? `You are about ${Math.round(distanceM)}m from the site, and you have to be on site to clock on.`
+            : 'You have to be on site to clock on.',
+      };
+    }
+  }
+
+  // --- operating hours -------------------------------------------------------
+  // Gates starting a shift, not ending one: refusing a clock-out because a
+  // shift ran past closing time would trap a worker clocked in forever. A
+  // supervisor/admin clocking someone in deliberately (crew clock, a missed-
+  // time entry) bypasses this the same way they already bypass the geofence -
+  // they are a person making a decision, not GPS or a clock guessing.
+  if (
+    event.eventType === 'clock_in' &&
+    (event.clockMethod === 'manual' || event.clockMethod === 'auto_geofence')
+  ) {
+    const hours = await checkOperatingHours(db, {
+      companyId,
+      deviceTime: event.deviceTime,
+      siteHoursStart: site?.operating_hours_start,
+      siteHoursEnd: site?.operating_hours_end,
+    });
+    if (!hours.allowed) {
+      return {
+        status: 'rejected',
+        idempotencyKey: key,
+        code: 'outside_operating_hours',
+        message: hours.message,
+      };
+    }
   }
 
   // --- write ---------------------------------------------------------------
@@ -224,12 +339,25 @@ async function ingestOne(
         priorEvents,
       });
 
-      // Phase 3: a geofence-raised event lands as a suggestion, not a live
-      // clock - keyed purely off clockMethod so the client can't claim
-      // confirmed status for itself by lying about this field. Everything
-      // downstream (deriveState/orderedLiveEvents) already ignores it until
-      // a later update flips this back to false.
-      const isSuggested = event.clockMethod === 'auto_geofence';
+      // Phase 3: a geofence-raised event lands as a suggestion unless it is
+      // confident and unambiguous enough to skip the tap (see
+      // shouldAutoConfirmGeofence) - tap-to-confirm is the fallback, not the
+      // default. Either way this is decided from server-computed signals, not
+      // anything the client claims, so a tampered client cannot grant itself
+      // confirmed status by lying about clockMethod or accuracy.
+      const candidateCount = event.candidateJobIds?.length ?? 1;
+      const candidateJobIds =
+        event.clockMethod === 'auto_geofence' && candidateCount > 1
+          ? event.candidateJobIds!
+          : null;
+      const autoConfirmed =
+        event.clockMethod === 'auto_geofence' &&
+        shouldAutoConfirmGeofence({
+          insideGeofence,
+          accuracyM: event.gpsAccuracyM ?? null,
+          candidateSiteCount: candidateCount,
+        });
+      const isSuggested = event.clockMethod === 'auto_geofence' && !autoConfirmed;
 
       const inserted = await one<{ id: string }>(
         tx,
@@ -238,9 +366,10 @@ async function ingestOne(
            event_type, device_time, server_time,
            latitude, longitude, gps_accuracy_m,
            inside_geofence, distance_from_site_m, outside_reason,
-           clock_method, was_offline, is_suggested, source_device_id, idempotency_key, created_by
+           clock_method, was_offline, is_suggested, candidate_job_ids,
+           source_device_id, idempotency_key, created_by
          ) values (
-           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
          )
          -- The unique index is the real guard; this makes a racing duplicate
          -- return quietly instead of surfacing a constraint error to a phone
@@ -265,6 +394,7 @@ async function ingestOne(
           event.clockMethod,
           event.wasOffline,
           isSuggested,
+          candidateJobIds,
           event.deviceId ?? null,
           key,
           event.actingUserId ?? actingUserId,
@@ -320,6 +450,14 @@ async function ingestOne(
         timesheetId,
         insideGeofence,
         distanceM,
+        // Not !isSuggested: that's true for every manual/supervisor/admin
+        // clock too, since only an auto_geofence event is ever suggested in
+        // the first place. This field means one specific thing — did the
+        // server's own GPS confidence check confirm this event without a
+        // tap — so it must be exactly the variable that answered that
+        // question, not a stand-in that happens to agree only for the one
+        // clock method currently reading it.
+        autoConfirmed,
       };
     },
     {

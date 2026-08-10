@@ -14,6 +14,7 @@ import type {
   DayTotals,
   StoredAttendanceEvent,
   TimeSegment,
+  TravelAllocation,
   WorkActivityRef,
 } from './types.js';
 import { orderedLiveEvents } from './state-machine.js';
@@ -32,6 +33,17 @@ export interface BuildSegmentsOptions {
    * undefined so an open shift stays visibly open.
    */
   now?: Date;
+  /**
+   * Which site travel between two jobs costs to. A travel segment is only
+   * ever produced with jobId null in the first place — see the job_change
+   * case below — so 'unallocated' (the default) is exactly today's behaviour.
+   */
+  travelAllocation?: TravelAllocation;
+  /** Company payroll setting: deduct an unpaid lunch automatically on a long
+   * enough shift where the worker never clocked a break at all. Undefined/null
+   * disables it — most callers outside getWorkerHome/rebuildTimesheet should
+   * leave this off rather than guess at company policy. */
+  autoLunch?: { thresholdMinutes: number; durationMinutes: number } | null;
 }
 
 export interface BuildSegmentsResult {
@@ -176,7 +188,27 @@ export function buildSegments(
     }
   }
 
-  return { segments, totals: totalsFor(segments), hasOpenShift };
+  allocateTravel(segments, options.travelAllocation ?? 'unallocated');
+
+  return { segments, totals: totalsFor(segments, options.autoLunch), hasOpenShift };
+}
+
+/**
+ * Travel is only ever produced with jobId null (see the job_change case
+ * above — that is the literal recording of "belongs to neither site"). This
+ * reassigns it after the fact rather than during the main pass, because
+ * 'second_site' needs the segment that has not been built yet.
+ */
+function allocateTravel(segments: TimeSegment[], mode: TravelAllocation): void {
+  if (mode === 'unallocated') return;
+
+  for (let i = 0; i < segments.length; i += 1) {
+    const s = segments[i]!;
+    if (s.segmentType !== 'travel' || s.jobId !== null) continue;
+
+    const neighbour = mode === 'first_site' ? segments[i - 1] : segments[i + 1];
+    if (neighbour?.jobId != null) s.jobId = neighbour.jobId;
+  }
 }
 
 function materialise(
@@ -204,19 +236,35 @@ function materialise(
   };
 }
 
-export function totalsFor(segments: readonly TimeSegment[]): DayTotals {
+export function totalsFor(
+  segments: readonly TimeSegment[],
+  autoLunch?: { thresholdMinutes: number; durationMinutes: number } | null,
+): DayTotals {
   let totalShiftMinutes = 0;
   let totalBreakMinutes = 0;
   let totalPaidMinutes = 0;
+  let hasAnyBreak = false;
 
   for (const s of segments) {
     const m = s.minutes ?? 0;
     totalShiftMinutes += m;
-    if (s.segmentType === 'break') totalBreakMinutes += m;
+    if (s.segmentType === 'break') {
+      totalBreakMinutes += m;
+      hasAnyBreak = true;
+    }
     if (s.isPaid) totalPaidMinutes += m;
   }
 
-  return { totalShiftMinutes, totalBreakMinutes, totalPaidMinutes };
+  // Only for a shift where the worker never clocked a break at all — one
+  // taken (paid or not) means they already accounted for it themselves, and
+  // this must not dock them twice.
+  let autoLunchMinutes = 0;
+  if (autoLunch && !hasAnyBreak && totalShiftMinutes >= autoLunch.thresholdMinutes) {
+    autoLunchMinutes = Math.min(autoLunch.durationMinutes, totalPaidMinutes);
+    totalPaidMinutes -= autoLunchMinutes;
+  }
+
+  return { totalShiftMinutes, totalBreakMinutes, totalPaidMinutes, autoLunchMinutes };
 }
 
 /** "7h 45m" — the only formatting workers and payroll both read the same way. */

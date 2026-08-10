@@ -12,6 +12,7 @@
  */
 
 import type { ClockEventInput } from '@skelclock/core';
+import { ingestResponseSchema } from '@skelclock/contracts';
 import { ingestEvents, enqueueTimesheetPush } from '@skelclock/server';
 
 import { db } from '../../../lib/db';
@@ -82,6 +83,9 @@ export async function POST(request: Request): Promise<Response> {
       wasOffline: Boolean(raw.wasOffline),
       deviceId: (raw.deviceId as string | null) ?? null,
       actingUserId: caller.appUserId,
+      candidateJobIds: Array.isArray(raw.candidateJobIds)
+        ? (raw.candidateJobIds as unknown[]).filter((v): v is string => typeof v === 'string')
+        : null,
     });
   }
 
@@ -90,7 +94,7 @@ export async function POST(request: Request): Promise<Response> {
       companyId: caller.companyId,
       events,
       actingUserId: caller.appUserId,
-      defaultGeofenceRadiusM: Number(process.env.DEFAULT_GEOFENCE_RADIUS_M ?? 200),
+      defaultGeofenceRadiusM: Number(process.env.DEFAULT_GEOFENCE_RADIUS_M ?? 70),
     });
 
     // A completed day is worth queueing for Odoo straight away — the worker
@@ -101,16 +105,18 @@ export async function POST(request: Request): Promise<Response> {
       await enqueueTimesheetPush(db, { companyId: caller.companyId, timesheetId });
     }
 
-    return Response.json({
-      outcomes: result.outcomes.map((o) => ({
-        idempotencyKey: o.idempotencyKey,
-        status: o.status,
-        ...(o.status === 'rejected' ? { code: o.code, message: o.message } : {}),
-        ...(o.status === 'created'
-          ? { insideGeofence: o.insideGeofence, distanceM: o.distanceM }
-          : {}),
-      })),
-    });
+    return Response.json(
+      ingestResponseSchema.parse({
+        outcomes: result.outcomes.map((o) => ({
+          idempotencyKey: o.idempotencyKey,
+          status: o.status,
+          ...(o.status === 'rejected' ? { code: o.code, message: o.message } : {}),
+          ...(o.status === 'created'
+            ? { insideGeofence: o.insideGeofence, distanceM: o.distanceM, autoConfirmed: o.autoConfirmed }
+            : {}),
+        })),
+      }),
+    );
   } catch (error) {
     console.error('ingest failed', error);
     // A 500 keeps the events queued on the device, which is the safe outcome.

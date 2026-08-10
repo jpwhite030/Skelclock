@@ -6,6 +6,7 @@
  * workflow layer decide whether the transition itself is legal.
  */
 
+import { timesheetActionResponseSchema } from '@skelclock/contracts';
 import {
   approveTimesheet,
   confirmTimesheet,
@@ -87,7 +88,9 @@ export async function POST(
       await enqueueTimesheetPush(db, { companyId: caller.companyId, timesheetId });
     }
 
-    return Response.json({ id: result.id, status: result.status });
+    return Response.json(
+      timesheetActionResponseSchema.parse({ id: result.id, status: result.status }),
+    );
   } catch (error) {
     const authResponse = authErrorResponse(error);
     if (authResponse) return authResponse;

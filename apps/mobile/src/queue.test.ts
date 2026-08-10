@@ -50,7 +50,13 @@ class FakeTransport implements Transport {
 
 const acceptAll = (): FakeTransport =>
   new FakeTransport((events) =>
-    events.map((e) => ({ idempotencyKey: e.idempotencyKey, status: 'created' as const })),
+    events.map((e) => ({
+      idempotencyKey: e.idempotencyKey,
+      status: 'created' as const,
+      insideGeofence: null,
+      distanceM: null,
+      autoConfirmed: true,
+    })),
   );
 
 const offline = (): FakeTransport =>
@@ -140,7 +146,13 @@ test('reception returning flushes the whole backlog', async () => {
   let online = false;
   const transport = new FakeTransport((events) =>
     online
-      ? events.map((e) => ({ idempotencyKey: e.idempotencyKey, status: 'created' as const }))
+      ? events.map((e) => ({
+          idempotencyKey: e.idempotencyKey,
+          status: 'created' as const,
+          insideGeofence: null,
+          distanceM: null,
+          autoConfirmed: true,
+        }))
       : new Error('Network request failed'),
   );
   const queue = new EventQueue(store, transport);
@@ -178,7 +190,13 @@ test('the idempotency key never changes across retries', async () => {
   let online = false;
   const transport = new FakeTransport((events) =>
     online
-      ? events.map((e) => ({ idempotencyKey: e.idempotencyKey, status: 'created' as const }))
+      ? events.map((e) => ({
+          idempotencyKey: e.idempotencyKey,
+          status: 'created' as const,
+          insideGeofence: null,
+          distanceM: null,
+          autoConfirmed: true,
+        }))
       : new Error('offline'),
   );
   const queue = new EventQueue(store, transport);
@@ -265,7 +283,13 @@ test('flushing an empty queue is a no-op that touches no network', async () => {
 test('a partial batch response settles each event on its own merits', async () => {
   const store = new MemoryQueueStore();
   const transport = new FakeTransport((events) => [
-    { idempotencyKey: events[0]!.idempotencyKey, status: 'created' },
+    {
+      idempotencyKey: events[0]!.idempotencyKey,
+      status: 'created',
+      insideGeofence: null,
+      distanceM: null,
+      autoConfirmed: true,
+    },
     {
       idempotencyKey: events[1]!.idempotencyKey,
       status: 'rejected',

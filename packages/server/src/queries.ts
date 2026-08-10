@@ -11,42 +11,22 @@ import {
   currentShift,
   deriveState,
   formatMinutes,
-  type ClockState,
+  type AttendanceEventType,
 } from '@skelclock/core';
+import { workerHomeSchema, type WorkerHomeDto } from '@skelclock/contracts';
 
 import { one, type Db } from './db.js';
 import { toStoredEvent } from './ingest.js';
+import { payrollSegmentOptions } from './settings.js';
 
 const iso = (v: unknown): string | null =>
   v == null ? null : v instanceof Date ? v.toISOString() : String(v);
 
 // --- worker home ------------------------------------------------------------
 
-export interface WorkerHome {
-  employeeId: string;
-  employeeName: string;
-  workDate: string;
-  clockState: ClockState;
-  timesheetId: string | null;
-  timesheetStatus: string | null;
-  assignedJob: {
-    id: string;
-    jobNumber: string;
-    customerName: string | null;
-    siteName: string | null;
-    siteAddress: string | null;
-    latitude: number | null;
-    longitude: number | null;
-    geofenceRadiusM: number;
-    scheduledStart: string | null;
-  } | null;
-  currentJobId: string | null;
-  currentActivityId: string | null;
-  minutesWorked: number;
-  hoursWorkedLabel: string;
-  breakMinutes: number;
-  pendingSyncCount: number;
-}
+/** Everything the contract carries except `role`, which is caller data the
+ * route injects from the app_user row — this query has no caller. */
+export type WorkerHome = Omit<WorkerHomeDto, 'role'>;
 
 export async function getWorkerHome(
   db: Db,
@@ -96,7 +76,10 @@ export async function getWorkerHome(
     ? windowEvents.filter((e) => e.timesheetId === scopeTimesheetId)
     : [];
 
-  const { segments, totals } = buildSegments(events, { now });
+  const { segments, totals } = buildSegments(events, {
+    now,
+    ...(await payrollSegmentOptions(db, args.companyId)),
+  });
 
   const lastLive = [...events].reverse()[0];
 
@@ -136,7 +119,7 @@ export async function getWorkerHome(
     [args.employeeId],
   );
 
-  return {
+  return workerHomeSchema.omit({ role: true }).parse({
     employeeId: employee.id,
     employeeName: employee.full_name,
     workDate: args.workDate,
@@ -152,7 +135,7 @@ export async function getWorkerHome(
           siteAddress: assignment.address,
           latitude: assignment.latitude,
           longitude: assignment.longitude,
-          geofenceRadiusM: assignment.geofence_radius_m ?? 200,
+          geofenceRadiusM: assignment.geofence_radius_m ?? 70,
           scheduledStart: iso(assignment.scheduled_start),
         }
       : null,
@@ -164,8 +147,9 @@ export async function getWorkerHome(
     minutesWorked: totals.totalPaidMinutes,
     hoursWorkedLabel: formatMinutes(totals.totalPaidMinutes),
     breakMinutes: totals.totalBreakMinutes,
+    autoLunchMinutes: totals.autoLunchMinutes,
     pendingSyncCount: Number(pending?.count ?? 0),
-  };
+  });
 }
 
 // --- admin: working now -----------------------------------------------------
@@ -174,6 +158,7 @@ export interface WorkingNowRow {
   employeeId: string;
   employeeName: string;
   crewName: string | null;
+  jobId: string | null;
   jobNumber: string | null;
   siteName: string | null;
   activityName: string | null;
@@ -184,6 +169,11 @@ export interface WorkingNowRow {
   locationStatus: 'inside' | 'outside' | 'unknown';
   distanceM: number | null;
   syncStatus: string;
+  /** The most recent clock event this shift that carried a GPS fix. Not live
+   * tracking — location is only ever recorded at clock events. */
+  lastLatitude: number | null;
+  lastLongitude: number | null;
+  lastFixAt: string | null;
 }
 
 export async function getWorkingNow(
@@ -192,6 +182,9 @@ export async function getWorkingNow(
 ): Promise<WorkingNowRow[]> {
   const now = args.now ?? new Date();
   const since = new Date(now.getTime() - 48 * 3_600_000).toISOString();
+  // Fetched once, not per employee below — every row in this list agrees
+  // with the worker's own home screen about auto-lunch and travel policy.
+  const payrollOptions = await payrollSegmentOptions(db, args.companyId);
 
   // Everyone with at least one live event in the window; state is decided in
   // TypeScript by the same state machine the phone uses, so the dashboard can
@@ -233,9 +226,12 @@ export async function getWorkingNow(
     const shift = currentShift(windowEvents);
     if (!shift) continue;
 
-    const { segments, totals } = buildSegments(shift.events, { now });
+    const { segments, totals } = buildSegments(shift.events, { now, ...payrollOptions });
     const current = segments[segments.length - 1];
     const clockIn = shift.events.find((e) => e.eventType === 'clock_in');
+    const lastFix = [...shift.events]
+      .reverse()
+      .find((e) => e.latitude != null && e.longitude != null);
 
     const job = current?.jobId
       ? await one<{ job_number: string; site_name: string | null }>(
@@ -265,6 +261,7 @@ export async function getWorkingNow(
       employeeId: r.employee_id,
       employeeName: r.full_name,
       crewName: r.crew_name,
+      jobId: current?.jobId ?? null,
       jobNumber: job?.job_number ?? null,
       siteName: job?.site_name ?? null,
       activityName: activity?.name ?? null,
@@ -280,6 +277,9 @@ export async function getWorkingNow(
             : 'unknown',
       distanceM: clockIn?.distanceFromSiteM ?? null,
       syncStatus: sync?.status ?? 'not_queued',
+      lastLatitude: lastFix?.latitude ?? null,
+      lastLongitude: lastFix?.longitude ?? null,
+      lastFixAt: lastFix?.deviceTime ?? null,
     });
   }
 
@@ -378,6 +378,7 @@ export interface TimesheetRow {
   totalShiftMinutes: number;
   totalBreakMinutes: number;
   totalPaidMinutes: number;
+  autoLunchMinutes: number;
   paidHoursLabel: string;
   jobNumbers: string[];
   openExceptions: number;
@@ -422,6 +423,7 @@ export async function listTimesheets(
     total_shift_minutes: number;
     total_break_minutes: number;
     total_paid_minutes: number;
+    total_auto_lunch_minutes: number;
     job_numbers: string[] | null;
     open_exceptions: string;
     sync_status: string | null;
@@ -429,6 +431,7 @@ export async function listTimesheets(
   }>(
     `select t.id, t.work_date, t.employee_id, e.full_name, t.status,
             t.total_shift_minutes, t.total_break_minutes, t.total_paid_minutes,
+            t.total_auto_lunch_minutes,
             (select array_agg(distinct j.job_number)
                from time_segment ts join job j on j.id = ts.job_id
               where ts.timesheet_id = t.id) as job_numbers,
@@ -455,6 +458,7 @@ export async function listTimesheets(
     totalShiftMinutes: r.total_shift_minutes,
     totalBreakMinutes: r.total_break_minutes,
     totalPaidMinutes: r.total_paid_minutes,
+    autoLunchMinutes: r.total_auto_lunch_minutes,
     paidHoursLabel: formatMinutes(r.total_paid_minutes),
     jobNumbers: r.job_numbers ?? [],
     openExceptions: Number(r.open_exceptions),
@@ -670,4 +674,125 @@ export async function getAuditTrail(
     before: parse(r.before_value),
     after: parse(r.after_value),
   }));
+}
+
+// --- timesheet detail (correction screen) -----------------------------------
+
+export interface TimesheetDetailEvent {
+  id: string;
+  eventType: AttendanceEventType;
+  deviceTime: string;
+  jobId: string | null;
+  jobNumber: string | null;
+  workActivityId: string | null;
+  activityName: string | null;
+  clockMethod: string;
+  isSuggested: boolean;
+  insideGeofence: boolean | null;
+  distanceM: number | null;
+  outsideReason: string | null;
+  wasOffline: boolean;
+}
+
+export interface TimesheetDetail {
+  id: string;
+  companyId: string;
+  workDate: string;
+  status: string;
+  employeeId: string;
+  employeeName: string;
+  totalShiftMinutes: number;
+  totalBreakMinutes: number;
+  totalPaidMinutes: number;
+  autoLunchMinutes: number;
+}
+
+/** Everything a correction screen needs: who, which day, and the live event
+ * list to correct, void or add to. Voided events are left out — their story
+ * is getAuditTrail, not this list. */
+export async function getTimesheetDetail(
+  db: Db,
+  args: { companyId: string; timesheetId: string },
+): Promise<{ timesheet: TimesheetDetail; events: TimesheetDetailEvent[] } | null> {
+  const sheet = await one<{
+    id: string;
+    company_id: string;
+    work_date: Date | string;
+    status: string;
+    employee_id: string;
+    full_name: string;
+    total_shift_minutes: number;
+    total_break_minutes: number;
+    total_paid_minutes: number;
+    total_auto_lunch_minutes: number;
+  }>(
+    db,
+    `select t.id, t.company_id, t.work_date, t.status, t.employee_id, e.full_name,
+            t.total_shift_minutes, t.total_break_minutes, t.total_paid_minutes,
+            t.total_auto_lunch_minutes
+       from timesheet t
+       join employee e on e.id = t.employee_id
+      where t.id = $1 and t.company_id = $2`,
+    [args.timesheetId, args.companyId],
+  );
+  if (!sheet) return null;
+
+  const { rows } = await db.query<{
+    id: string;
+    event_type: AttendanceEventType;
+    device_time: Date | string;
+    job_id: string | null;
+    job_number: string | null;
+    work_activity_id: string | null;
+    activity_name: string | null;
+    clock_method: string;
+    is_suggested: boolean;
+    inside_geofence: boolean | null;
+    distance_from_site_m: number | null;
+    outside_reason: string | null;
+    was_offline: boolean;
+  }>(
+    `select ae.id, ae.event_type, ae.device_time, ae.job_id, j.job_number,
+            ae.work_activity_id, wa.name as activity_name, ae.clock_method,
+            ae.is_suggested, ae.inside_geofence, ae.distance_from_site_m,
+            ae.outside_reason, ae.was_offline
+       from attendance_event ae
+       left join job j on j.id = ae.job_id
+       left join work_activity wa on wa.id = ae.work_activity_id
+      where ae.timesheet_id = $1 and ae.voided_at is null
+      order by ae.device_time asc`,
+    [args.timesheetId],
+  );
+
+  return {
+    timesheet: {
+      id: sheet.id,
+      companyId: sheet.company_id,
+      workDate: String(
+        sheet.work_date instanceof Date ? sheet.work_date.toISOString().slice(0, 10) : sheet.work_date,
+      ),
+      status: sheet.status,
+      employeeId: sheet.employee_id,
+      employeeName: sheet.full_name,
+      totalShiftMinutes: sheet.total_shift_minutes,
+      totalBreakMinutes: sheet.total_break_minutes,
+      totalPaidMinutes: sheet.total_paid_minutes,
+      autoLunchMinutes: sheet.total_auto_lunch_minutes,
+    },
+    events: rows.map((r) => ({
+      id: r.id,
+      eventType: r.event_type,
+      deviceTime: iso(r.device_time)!,
+      jobId: r.job_id,
+      jobNumber: r.job_number,
+      workActivityId: r.work_activity_id,
+      activityName: r.activity_name,
+      clockMethod: r.clock_method,
+      isSuggested: r.is_suggested,
+      insideGeofence: r.inside_geofence,
+      distanceM: r.distance_from_site_m,
+      outsideReason: r.outside_reason,
+      wasOffline: r.was_offline,
+    })),
+  };
 }

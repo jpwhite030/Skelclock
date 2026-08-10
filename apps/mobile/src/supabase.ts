@@ -62,37 +62,35 @@ const secureStorage = {
   },
 };
 
-export const supabase: SupabaseClient = createClient(url, anonKey, {
-  auth: {
-    storage: secureStorage,
-    autoRefreshToken: true,
-    persistSession: true,
-    // No URL session detection: this is a native app, not a browser.
-    detectSessionInUrl: false,
-  },
-});
+/**
+ * True once a Supabase project is configured. When it is not — a clean clone
+ * with no .env — there is no project to talk to, so createClient is not called
+ * at all: it throws on an empty URL, and it would throw during module load,
+ * taking the whole app down before the first screen renders. src/auth.ts falls
+ * back to demo sign-in in that case.
+ */
+export const isSupabaseConfigured = Boolean(url && anonKey);
 
-export async function sendOtp(phone: string): Promise<void> {
-  const { error } = await supabase.auth.signInWithOtp({ phone: toE164(phone) });
-  if (error) throw new Error(error.message);
-}
+export const supabase: SupabaseClient | null = isSupabaseConfigured
+  ? createClient(url, anonKey, {
+      auth: {
+        storage: secureStorage,
+        autoRefreshToken: true,
+        persistSession: true,
+        // No URL session detection: this is a native app, not a browser.
+        detectSessionInUrl: false,
+      },
+    })
+  : null;
 
-export async function verifyOtp(phone: string, token: string): Promise<void> {
-  const { error } = await supabase.auth.verifyOtp({
-    phone: toE164(phone),
-    token,
-    type: 'sms',
-  });
-  if (error) throw new Error(error.message);
-}
-
-export async function accessToken(): Promise<string | null> {
-  const { data } = await supabase.auth.getSession();
-  return data.session?.access_token ?? null;
-}
-
-export async function signOut(): Promise<void> {
-  await supabase.auth.signOut();
+/** The configured client, or a clear error rather than a null dereference. */
+export function requireSupabase(): SupabaseClient {
+  if (!supabase) {
+    throw new Error(
+      'Supabase is not configured. Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY.',
+    );
+  }
+  return supabase;
 }
 
 /**

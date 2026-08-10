@@ -1,29 +1,66 @@
+// First import in the app: installs the crypto global that idempotency keys
+// and the device id both depend on.
+import '../src/polyfills';
+
 import { useEffect, useState } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import type { Session } from '@supabase/supabase-js';
+import { useFonts } from 'expo-font';
+import * as SplashScreen from 'expo-splash-screen';
+import {
+  IBMPlexMono_400Regular,
+  IBMPlexMono_500Medium,
+} from '@expo-google-fonts/ibm-plex-mono';
+import { InstrumentSans_400Regular } from '@expo-google-fonts/instrument-sans';
 
-import { supabase } from '../src/supabase';
-import { colors } from '../src/theme';
+// Side-effect only: registers TaskManager.defineTask(...) for both background
+// tasks at the true app entry, unconditionally. They already run whenever
+// useClock (mounted from app/index.tsx) pulls them in transitively, but a
+// background trigger can relaunch the app headless — via a path that may not
+// render index.tsx first — and the OS needs the task already registered the
+// moment that JS context finishes evaluating. Importing here, outside any
+// component, is the belt-and-suspenders placement Expo's own docs recommend.
+import '../src/geofence';
+import '../src/tracking';
+
+import { getSession, onSessionChange, type AppSession } from '../src/auth';
+import { colors, fonts, FONT_ASSETS, type as t } from '../src/theme';
+
+// Held until the faces are in memory. A first frame in the system font would
+// be the exact defect SETOUT exists to fix, and on a cold start it is the
+// frame a worker actually sees.
+void SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSession] = useState<AppSession | null>(null);
   const [ready, setReady] = useState(false);
   const segments = useSegments();
   const router = useRouter();
 
+  const [fontsLoaded, fontError] = useFonts({
+    ...FONT_ASSETS,
+    IBMPlexMono_400Regular,
+    IBMPlexMono_500Medium,
+    InstrumentSans_400Regular,
+  });
+
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
+    getSession().then((next) => {
+      setSession(next);
       setReady(true);
     });
 
-    const { data: subscription } = supabase.auth.onAuthStateChange((_event, next) => {
-      setSession(next);
-    });
-    return () => subscription.subscription.unsubscribe();
+    return onSessionChange(setSession);
   }, []);
+
+  // A missing font file must not cost a worker their shift, so a load failure
+  // falls through to the system face rather than holding the splash forever.
+  const booted = ready && (fontsLoaded || fontError !== null);
+
+  useEffect(() => {
+    if (booted) void SplashScreen.hideAsync();
+  }, [booted]);
 
   useEffect(() => {
     if (!ready) return;
@@ -34,17 +71,28 @@ export default function RootLayout() {
     if (session && onLogin) router.replace('/');
   }, [ready, session, segments, router]);
 
+  if (!booted) return null;
+
   return (
     <SafeAreaProvider>
-      <StatusBar style="light" />
+      {/* Dark glyphs: the ground is paper. */}
+      <StatusBar style="dark" />
       <Stack
         screenOptions={{
-          headerStyle: { backgroundColor: colors.bg },
-          headerTintColor: colors.text,
-          contentStyle: { backgroundColor: colors.bg },
+          headerStyle: { backgroundColor: colors.paper },
+          headerTintColor: colors.ink,
+          headerShadowVisible: false,
+          headerTitleStyle: {
+            ...t.lbl,
+            // The header title is chrome, and chrome is where brand is allowed.
+            color: colors.brand,
+            fontFamily: fonts.monoMedium,
+          },
+          contentStyle: { backgroundColor: colors.paper },
         }}
       >
-        <Stack.Screen name="index" options={{ title: 'SkelClock' }} />
+        <Stack.Screen name="index" options={{ headerShown: false }} />
+        <Stack.Screen name="crew" options={{ title: 'My crew' }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
       </Stack>
     </SafeAreaProvider>

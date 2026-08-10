@@ -1,3 +1,5 @@
+import Link from 'next/link';
+
 import type { DashboardSession } from '../lib/session';
 
 export function NoSession() {
@@ -8,8 +10,9 @@ export function NoSession() {
         <span className="lbl no">SHT — / No datum</span>
       </div>
       <p className="lead" style={{ color: 'var(--muted)', maxWidth: '52ch' }}>
-        Sign in with an office account to see attendance. If this is a fresh install, run
-        the migrations and import employees from Odoo first.
+        <Link href="/login" style={{ color: 'var(--bone)' }}>Sign in</Link> with an office
+        account to see attendance. If this is a fresh install, run the migrations and
+        import employees from Odoo first.
       </p>
     </main>
   );

@@ -12,11 +12,12 @@
  * exactly what the previous build did.
  */
 
-import { getRosteredNotOn, getWorkingNow, type WorkingNowRow } from '@skelclock/server';
+import { getRosteredNotOn, getWorkingNow, listSites, type WorkingNowRow } from '@skelclock/server';
 
 import { db } from '../lib/db';
 import { getDashboardSession } from '../lib/session';
 import { NoSession, SessionWarning } from '../components/session-state';
+import { WorkingMapLoader } from './working-map-loader';
 
 // Live shift state — never served from a cache. The rail's datum block
 // re-fetches this every 30 seconds via router.refresh().
@@ -30,9 +31,10 @@ export default async function WorkingNowPage() {
   const now = new Date();
   const workDate = localDate(now);
 
-  const [rows, rosteredAll] = await Promise.all([
+  const [rows, rosteredAll, sites] = await Promise.all([
     getWorkingNow(db, { companyId: session.companyId, now }),
     getRosteredNotOn(db, { companyId: session.companyId, workDate, now }),
+    listSites(db, { companyId: session.companyId }),
   ]);
 
   // A night crew that started yesterday is rostered for today and has no
@@ -196,6 +198,22 @@ export default async function WorkingNowPage() {
         </aside>
       )}
       </div>
+
+      {/* E. The site plan. Only drawn when there is something to plot — an
+             empty aerial photo is decoration, and this screen doesn't carry
+             decoration. Positions are clock-event fixes, not tracking, and
+             on-site pins only: an off-site clock shows in the table as a
+             distance, never as a point on the photo. */}
+      {(rows.some((r) => r.lastLatitude != null && r.locationStatus === 'inside') ||
+        sites.some((s) => s.latitude != null)) && (
+        <div className="working-map-block">
+          <div className="lbl" style={{ padding: 'var(--r-4) 0' }}>
+            Site plan — on-site positions from each worker&apos;s last clock event.
+            Off-site clocks are listed above by distance only.
+          </div>
+          <WorkingMapLoader rows={rows} sites={sites} />
+        </div>
+      )}
     </main>
   );
 }

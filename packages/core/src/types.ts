@@ -31,7 +31,15 @@ export type ExceptionType =
   | 'very_long_shift'
   | 'offline_event'
   | 'unassigned_job'
-  | 'odoo_sync_failure';
+  | 'odoo_sync_failure'
+  /**
+   * Synthetic — computed live from attendance_event at read time, never
+   * written to attendance_exception or the DB enum (see
+   * packages/server/src/suggestions.ts:listStaleSuggestions). A geofence
+   * suggestion nobody has confirmed or dismissed after a while; the office
+   * would otherwise have no way to know a day is quietly missing hours.
+   */
+  | 'stale_suggestion';
 
 /**
  * An event exactly as the phone queues it. This shape crosses the wire and is
@@ -58,6 +66,13 @@ export interface ClockEventInput {
   deviceId?: string | null;
   /** Set by supervisor/crew flows; null when the worker acted for themselves. */
   actingUserId?: string | null;
+  /**
+   * Auto-geofence only: every assigned job whose site fence the fix fell
+   * inside. Length > 1 means the phone could not tell which site the worker
+   * meant — ingest.ts stores the list and never auto-confirms an ambiguous
+   * event, no matter how good the fix.
+   */
+  candidateJobIds?: string[] | null;
 }
 
 export interface WorkActivityRef {
@@ -111,4 +126,10 @@ export interface DayTotals {
   totalShiftMinutes: number;
   totalBreakMinutes: number;
   totalPaidMinutes: number;
+  /** Deducted automatically because no break was clocked on a long enough
+   * shift — see BuildSegmentsOptions.autoLunch. Zero when it didn't apply. */
+  autoLunchMinutes: number;
 }
+
+/** Company-wide payroll settings that change how a day is built, not just displayed. */
+export type TravelAllocation = 'unallocated' | 'first_site' | 'second_site';

@@ -506,6 +506,68 @@ main.paper {
 .act:hover { color: var(--cad-magenta); border-bottom-color: var(--cad-magenta); }
 .act[data-busy] { color: var(--cad-yellow); border-bottom-style: dashed; cursor: progress; }
 .act:disabled { color: var(--faint); border-bottom-color: var(--line); cursor: not-allowed; }
+/* Bone-on-paper is invisible; on the light surface the action writes in ink. */
+.paper .act { color: var(--ink); border-bottom-color: var(--ink-faint, var(--paper-line)); }
+.paper .act:hover { color: var(--cad-magenta-ink); border-bottom-color: var(--cad-magenta-ink); }
+
+/* ============================================================================
+   SHT 02a — TIMESHEET CORRECTION
+   ========================================================================= */
+
+.correction-list { display: flex; flex-direction: column; margin-top: var(--r-2); }
+.correction-row {
+  padding: var(--r-8) 0; border-top: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: var(--r-8);
+}
+.correction-row:last-child { border-bottom: 1px solid var(--line); }
+.correction-row[data-suggested] { opacity: .7; }
+.correction-row__main { display: flex; align-items: center; gap: var(--r-4); flex-wrap: wrap; }
+.correction-row__main .act { margin-left: var(--r-4); }
+
+.correction-row__form {
+  display: flex; align-items: flex-end; gap: var(--r-4); flex-wrap: wrap;
+  padding: var(--r-8); background: var(--canvas-200); border: 1px solid var(--line-strong);
+}
+.correction-row__form label {
+  display: flex; flex-direction: column; gap: 4px;
+  color: var(--muted); font: 500 11px/1 var(--font-mono);
+  letter-spacing: .1em; text-transform: uppercase;
+}
+.correction-row__form select, .correction-row__form input {
+  background: var(--canvas); border: 1px solid var(--line-strong); color: var(--bone);
+  font: 500 13px var(--font-mono); padding: 5px 8px; min-height: 28px;
+}
+.correction-row__form select:focus-visible, .correction-row__form input:focus-visible {
+  border-color: var(--cad-yellow); outline: none;
+}
+
+.correction-add { margin-top: var(--r-2); }
+
+/* ============================================================================
+   SHT 06 — SETTINGS
+   ========================================================================= */
+
+.card {
+  border: 1px solid var(--line-strong); padding: var(--r-2);
+  display: flex; flex-direction: column; gap: var(--r-8);
+  margin-bottom: var(--r-2); max-width: 62ch;
+}
+
+.settings-form__row {
+  display: flex; align-items: center; gap: var(--r-8);
+  color: var(--muted); font: 500 12px/1.4 var(--font-mono);
+  letter-spacing: .06em; text-transform: none;
+}
+.settings-form__row input[type="number"],
+.settings-form__row input[type="time"] {
+  background: var(--canvas-200); border: 1px solid var(--line-strong); color: var(--bone);
+  font: 500 13px var(--font-mono); padding: 4px 8px; min-height: 26px; width: 9ch;
+}
+.settings-form__row input[type="checkbox"],
+.settings-form__row input[type="radio"] { accent-color: var(--brand); }
+.settings-form__hint { display: block; color: var(--faint); font-size: 11px; margin-top: 2px; }
+
+.settings-form__save { display: flex; align-items: center; gap: var(--r-4); margin-top: var(--r-2); }
 
 /* ============================================================================
    SHT 01 — WORKING NOW
@@ -748,6 +810,27 @@ main.paper {
 .minimap i[data-sev="1"] { width: 12px; background: var(--cad-magenta); }
 .minimap i[data-sev="2"] { width: 8px;  background: var(--cad-yellow); }
 
+/* The verbs on an exception row. Text actions, not buttons — SHT 03 is a
+   mark-up, and a boxed button would outweigh the annotation it belongs to. */
+.exc-actions { display: flex; gap: var(--r-2); align-items: baseline; margin-top: var(--r-8); }
+
+/* SHT 01's site plan — last clock positions over the geofences. */
+.working-map-block { margin-top: var(--r-2); }
+.working-map { height: 360px; border: 1px solid var(--line-strong); overflow: hidden; }
+.working-map--loading {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--faint); font: 400 12px var(--font-mono);
+}
+
+/* Sign-in. One field, one button, same spec-line materials as everywhere. */
+.login-form { display: flex; flex-direction: column; gap: var(--r-2); max-width: 52ch; }
+.login-form__row { display: flex; gap: var(--r-4); }
+.login-form__row input {
+  flex: 1; background: var(--canvas); border: 1px solid var(--line-strong);
+  color: var(--bone); font: 500 13px var(--font-mono); padding: 5px 8px; min-height: 28px;
+}
+.login-form__row input:focus-visible { border-color: var(--cad-yellow); outline: none; }
+
 /* ============================================================================
    SHT 04 — SITE GEOFENCES (setout)
 
@@ -803,6 +886,26 @@ main.paper {
 .site-row-controls input:hover { border-bottom-color: var(--bone); }
 .site-row-controls input:focus-visible { border-color: var(--cad-yellow); }
 
+/* Adding a site by address, not an Odoo import — same rule as the fresh
+   'Moved' pin does, this is IN_HAND yellow until it is actually saved. */
+.site-add { padding: 0 var(--r-2) var(--r-4) 0; border-bottom: 1px solid var(--rule-steel); }
+.site-add__form { display: flex; flex-direction: column; gap: var(--r-8); }
+.site-add__search { display: flex; align-items: center; gap: var(--r-4); flex-wrap: wrap; }
+.site-add__search input {
+  flex: 1; min-width: 18ch;
+  background: var(--canvas); border: 1px solid var(--line-strong); color: var(--bone);
+  font: 500 13px var(--font-mono); padding: 5px 8px; min-height: 28px;
+}
+.site-add__search input:focus-visible { border-color: var(--cad-yellow); outline: none; }
+.site-add__results { display: flex; flex-direction: column; gap: 1px; background: var(--line); }
+.site-add__result {
+  appearance: none; text-align: left; cursor: pointer;
+  background: var(--canvas-200); border: 0; padding: var(--r-8);
+  font: 400 12px/1.4 var(--font-mono); color: var(--muted);
+}
+.site-add__result:hover { background: var(--canvas); color: var(--bone); }
+.site-add__hint { font: 400 11px/1.4 var(--font-mono); color: var(--faint); }
+
 .sites-map-panel { overflow: hidden; border-left: 1px solid var(--line); }
 
 /* Leaflet's own CSS assumes it is loaded before the map paints; make sure
@@ -811,12 +914,14 @@ main.paper {
   height: 100%; width: 100%; background: var(--canvas-100);
   font-family: var(--font-mono);
 }
-/* Stock OSM tiles are a bright white sheet in the middle of a dark drawing.
-   Desaturating before inverting gives a monochrome plan; hue-rotating instead
-   left the land green and the water teal, which read as a different app.
-   Pins and fences draw above this pane and are unaffected. */
+/* Satellite imagery, true colour — a scaffold gate is easier to place against
+   an actual photo of the site than a monochrome street plan. A slight
+   darkening keeps it from glaring in the middle of the rest of the dark UI
+   without touching its hue, unlike the old invert-and-desaturate treatment
+   this replaced (that only worked on flat-colour street tiles). Pins and
+   fences draw above this pane and are unaffected. */
 .leaflet-tile-pane {
-  filter: grayscale(1) invert(1) brightness(.82) contrast(1.05);
+  filter: brightness(.92);
 }
 .leaflet-container .leaflet-control-attribution {
   background: rgba(15,14,12,.75); color: var(--faint);
