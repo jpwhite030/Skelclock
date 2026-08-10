@@ -17,7 +17,7 @@
  */
 
 import { memo, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import MapView, { Circle, Marker, type Region } from 'react-native-maps';
 
 import { distanceMetres, type LatLng } from '@skelclock/core';
@@ -62,17 +62,32 @@ function SiteMapView({
   live,
 }: SiteMapProps) {
   const mapRef = useRef<MapView | null>(null);
+  /** Set once the worker moves the map themselves; stops all auto-framing. */
+  const touched = useRef(false);
+  /** Set after the first automatic frame, so it happens once and not per fix. */
+  const framed = useRef(false);
 
   const distanceM = fix ? distanceMetres(site, fix) : null;
   const inside = distanceM === null ? null : distanceM <= radiusM;
   const ink = inside === null ? colors.steel : inside ? colors.green : colors.magenta;
 
-  // Keep the whole fence and the worker on screen as they move. Framing just
-  // the two points zooms in until the boundary is off-screen, which loses the
-  // one thing the map is for — you cannot see which side of a line you are on
-  // if the line is not in shot.
+  // Frame the fence and the worker — once.
+  //
+  // This used to re-run on every position update. The watcher reports every
+  // ~10m or 5s, so the camera re-animated constantly: the map crept and
+  // twitched under your thumb the whole time you were on the screen, and any
+  // zoom you set was yanked away within seconds. That is the map half of
+  // "jumpy".
+  //
+  // So it frames on the first fix and then leaves the camera alone. The blue
+  // dot still moves — it is the map that stops chasing it. Once the worker has
+  // touched the map at all, it never re-frames: they are looking at something,
+  // and moving the view out from under someone reading it is the rudest thing
+  // a map can do.
   useEffect(() => {
     if (!fix || !mapRef.current) return;
+    if (touched.current || framed.current) return;
+    framed.current = true;
 
     // Far enough away and framing both is useless — a worker 12,000km from the
     // site gets an ocean, with the fence too small to see and their own dot on
@@ -113,15 +128,13 @@ function SiteMapView({
   return (
     <View style={styles.wrap}>
       {/*
-        The map takes no touches at all.
-
-        It is a picture, not something to explore: it keeps itself framed on the
-        fence and the worker, so there is nothing panning would buy. Refusing
-        touches outright means it can never compete with the page for a drag —
-        a map that eats the scroll gesture on the one screen a worker uses would
-        put the controls below it out of reach.
+        The map takes touches now, which means it also takes drags that started
+        as an attempt to scroll the page. That is the cost of being able to zoom
+        in on a fence, and it is worth paying — but it is why the map is kept to
+        8 rosettes rather than filling the screen: there has to be sheet either
+        side of it to scroll by.
       */}
-      <View style={styles.map} pointerEvents="none">
+      <View style={styles.map}>
       <MapView
         ref={mapRef}
         style={StyleSheet.absoluteFill}
@@ -136,16 +149,23 @@ function SiteMapView({
         showsCompass={false}
         showsScale
         toolbarEnabled={false}
-        // Not a map you explore — a live picture of one question: which side of
-        // the fence are you on. Panning is off because the view keeps itself
-        // framed on the fence and the worker, and because a map inside a scroll
-        // view swallows the drag, which traps the page on the one screen that
-        // has to scroll. A worker fighting to get past the map to reach Clock
-        // Off is a worse outcome than one who cannot pinch to zoom.
-        scrollEnabled={false}
-        zoomEnabled={false}
+        // Zoom and pan are on: you cannot judge whether a fence sits over the
+        // right building without getting closer to it, and "is that pin on the
+        // gate or the neighbour's driveway" is the question this map exists to
+        // answer. Rotate and pitch stay off — a tilted, spun site plan is
+        // harder to read, not easier, and neither helps that question.
+        scrollEnabled
+        zoomEnabled
         rotateEnabled={false}
         pitchEnabled={false}
+        onPanDrag={() => {
+          touched.current = true;
+        }}
+        onRegionChangeComplete={(_r, details) => {
+          // isGesture is how we tell the worker moving the map from our own
+          // animateToRegion doing it. Only the former should stop the auto-fit.
+          if (details?.isGesture) touched.current = true;
+        }}
         loadingEnabled
         loadingBackgroundColor={colors.paper200}
         loadingIndicatorColor={colors.ink}
@@ -171,6 +191,24 @@ function SiteMapView({
         </Marker>
       </MapView>
       </View>
+
+      {/*
+        A way back. Now the map no longer chases the worker it will sit happily
+        wherever they left it, three suburbs away, and "how do I get back to the
+        site" should not itself be an act of navigation.
+      */}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Re-centre the map on the site"
+        onPress={() => {
+          touched.current = false;
+          framed.current = false;
+          mapRef.current?.animateToRegion(regionFor(site, radiusM), 350);
+        }}
+        style={({ pressed }) => [styles.recentre, pressed && styles.recentrePressed]}
+      >
+        <Text style={styles.recentreText}>Re-centre</Text>
+      </Pressable>
 
       {/*
         The title block, laid over the drawing rather than beside it — which is
@@ -238,6 +276,21 @@ const styles = StyleSheet.create({
   },
   customer: { ...t.dat, fontSize: 15, color: colors.ink },
   address: { ...t.dat, color: colors.ink700, flexShrink: 1 },
+
+  // Sits on the map, clear of the plate below it.
+  recentre: {
+    position: 'absolute',
+    top: rosette.r4,
+    right: rosette.r4,
+    minHeight: 34,
+    paddingHorizontal: rosette.r4,
+    justifyContent: 'center',
+    backgroundColor: colors.paper,
+    borderWidth: 1,
+    borderColor: colors.ink,
+  },
+  recentrePressed: { backgroundColor: colors.paper200 },
+  recentreText: { ...t.lbl, color: colors.ink },
 
   lbl: { ...t.lbl, color: colors.inkFaint },
   dat: { ...t.dat, color: colors.ink },
