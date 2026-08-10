@@ -48,6 +48,9 @@ import {
   SuggestionError,
   supervises,
   updateCompanySettings,
+  setUserRole,
+  syncRolesFromOdoo,
+  listRoleAssignments,
   updateExceptionStatus,
   updateSiteOperatingHours,
   voidEvent,
@@ -2769,6 +2772,198 @@ test('the missing clock-out sweep does not fire minutes into a legitimate overni
       email: noEmail,
     });
     assert.equal(pastClose.pushSent, 1, 'must nudge once genuinely past close plus grace');
+  } finally {
+    await close();
+  }
+});
+
+// --- roles -------------------------------------------------------------------
+
+test('an admin can promote somebody, and it is recorded as a human decision', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await setUserRole(db, {
+      companyId: fx.companyId,
+      targetAppUserId: fx.workerUserId,
+      role: 'supervisor',
+      actorUserId: fx.adminUserId,
+      reason: 'Running Crew A from Monday',
+    });
+
+    const assignments = await listRoleAssignments(db, { companyId: fx.companyId });
+    const changed = assignments.find((a) => a.appUserId === fx.workerUserId)!;
+    assert.equal(changed.role, 'supervisor');
+    // 'manual' is what protects it from the next org-chart sync.
+    assert.equal(changed.roleSource, 'manual');
+    assert.ok(changed.roleSetAt);
+  } finally {
+    await close();
+  }
+});
+
+test('a role change lands in the audit log with its actor and reason', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await setUserRole(db, {
+      companyId: fx.companyId,
+      targetAppUserId: fx.workerUserId,
+      role: 'supervisor',
+      actorUserId: fx.adminUserId,
+      reason: 'Running Crew A from Monday',
+    });
+
+    const entry = await one<{ actor_user_id: string; reason: string; after_value: { role: string } }>(
+      db,
+      `select actor_user_id, reason, after_value from audit_log
+        where table_name = 'app_user' and record_id = $1
+        order by created_at desc limit 1`,
+      [fx.workerUserId],
+    );
+    assert.equal(entry?.actor_user_id, fx.adminUserId);
+    assert.match(entry!.reason, /Crew A/);
+    assert.equal(entry!.after_value.role, 'supervisor');
+  } finally {
+    await close();
+  }
+});
+
+test('the last admin cannot be demoted, or the company locks itself out', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    // The fixture has exactly one admin. Demoting them leaves nobody who can
+    // promote anyone back, and the only way out is SQL against production.
+    await assert.rejects(
+      () =>
+        setUserRole(db, {
+          companyId: fx.companyId,
+          targetAppUserId: fx.adminUserId,
+          role: 'worker',
+          actorUserId: fx.adminUserId,
+          reason: 'Stepping back',
+        }),
+      /only admin left/,
+    );
+
+    const assignments = await listRoleAssignments(db, { companyId: fx.companyId });
+    assert.equal(assignments.find((a) => a.appUserId === fx.adminUserId)!.role, 'admin');
+  } finally {
+    await close();
+  }
+});
+
+test('a second admin makes the first one demotable', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await setUserRole(db, {
+      companyId: fx.companyId,
+      targetAppUserId: fx.supervisorUserId,
+      role: 'admin',
+      actorUserId: fx.adminUserId,
+      reason: 'Matt takes over the office',
+    });
+
+    await setUserRole(db, {
+      companyId: fx.companyId,
+      targetAppUserId: fx.adminUserId,
+      role: 'worker',
+      actorUserId: fx.supervisorUserId,
+      reason: 'Handing over',
+    });
+
+    const assignments = await listRoleAssignments(db, { companyId: fx.companyId });
+    assert.equal(assignments.find((a) => a.appUserId === fx.adminUserId)!.role, 'worker');
+    assert.equal(assignments.find((a) => a.appUserId === fx.supervisorUserId)!.role, 'admin');
+  } finally {
+    await close();
+  }
+});
+
+test('a role change needs a reason', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await assert.rejects(
+      () =>
+        setUserRole(db, {
+          companyId: fx.companyId,
+          targetAppUserId: fx.workerUserId,
+          role: 'supervisor',
+          actorUserId: fx.adminUserId,
+          reason: '   ',
+        }),
+      /reason is required/,
+    );
+  } finally {
+    await close();
+  }
+});
+
+test('the org chart sync promotes anyone Odoo says has reports', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    // The fixture supervisor has a direct report, but start them as a worker
+    // sourced from Odoo so the sync has something to correct.
+    await db.query(
+      `update app_user set role = 'worker', role_source = 'odoo' where id = $1`,
+      [fx.supervisorUserId],
+    );
+
+    const result = await syncRolesFromOdoo(db, { companyId: fx.companyId });
+    assert.equal(result.promoted, 1);
+
+    const assignments = await listRoleAssignments(db, { companyId: fx.companyId });
+    const supervisor = assignments.find((a) => a.appUserId === fx.supervisorUserId)!;
+    assert.equal(supervisor.role, 'supervisor');
+    assert.equal(supervisor.roleSource, 'odoo');
+  } finally {
+    await close();
+  }
+});
+
+test('the org chart sync never overrules a human, and never touches admin', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    // Set by hand: the supervisor is deliberately kept a worker despite having
+    // a report. That decision has to survive every future sync.
+    await setUserRole(db, {
+      companyId: fx.companyId,
+      targetAppUserId: fx.supervisorUserId,
+      role: 'worker',
+      actorUserId: fx.adminUserId,
+      reason: 'Off the tools, not running a crew this month',
+    });
+
+    const result = await syncRolesFromOdoo(db, { companyId: fx.companyId });
+    assert.ok(result.skippedManual >= 1);
+
+    const assignments = await listRoleAssignments(db, { companyId: fx.companyId });
+    assert.equal(assignments.find((a) => a.appUserId === fx.supervisorUserId)!.role, 'worker');
+    // Admin is company-wide payroll authority; Odoo models nothing that means
+    // that, so a sync must never grant or remove it.
+    assert.equal(assignments.find((a) => a.appUserId === fx.adminUserId)!.role, 'admin');
+  } finally {
+    await close();
+  }
+});
+
+test('a role cannot be changed across companies', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    const other = await one<{ id: string }>(
+      db,
+      `insert into company (name) values ('Someone Else Scaffolding') returning id`,
+      [],
+    );
+    await assert.rejects(
+      () =>
+        setUserRole(db, {
+          companyId: other!.id,
+          targetAppUserId: fx.workerUserId,
+          role: 'admin',
+          actorUserId: fx.adminUserId,
+          reason: 'Should never work',
+        }),
+      /not in this company/,
+    );
   } finally {
     await close();
   }

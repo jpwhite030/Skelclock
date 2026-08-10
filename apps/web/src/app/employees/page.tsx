@@ -16,6 +16,7 @@ import { getWorkingNow, listEmployees, type EmployeeRow } from '@skelclock/serve
 import { db } from '../../lib/db';
 import { getDashboardSession } from '../../lib/session';
 import { NoSession, SessionWarning } from '../../components/session-state';
+import { RoleControl, RoleSyncButton } from './role-control';
 
 export const dynamic = 'force-dynamic';
 
@@ -91,6 +92,8 @@ export default async function EmployeesPage({
     );
   });
 
+  const canEditRoles = session.role === 'admin';
+
   const counts = Object.fromEntries(
     TABS.map((t) => [t.key, rows.filter((r) => matchesTab(r, t.key, onShift)).length]),
   ) as Record<TabKey, number>;
@@ -109,6 +112,8 @@ export default async function EmployeesPage({
         there, and this screen never writes back. What it adds is whether the app
         is actually working for each person.
       </p>
+
+      {canEditRoles && <RoleSyncButton />}
 
       <form className="spec" method="get">
         <input type="hidden" name="tab" value={tab} />
@@ -186,7 +191,16 @@ export default async function EmployeesPage({
                 <td>{r.crewName ?? '—'}</td>
                 <td>{r.supervisorName ?? '—'}</td>
                 <td>
-                  <AccessCell row={r} />
+                  {canEditRoles && r.appUserId ? (
+                    <RoleControl
+                      appUserId={r.appUserId}
+                      role={r.role ?? 'worker'}
+                      roleSource={r.roleSource}
+                      name={r.fullName}
+                    />
+                  ) : (
+                    <AccessCell row={r} />
+                  )}
                 </td>
                 <td className="num">{r.daysWorkedRecently}</td>
                 <td>{formatWhen(r.lastClockAt)}</td>

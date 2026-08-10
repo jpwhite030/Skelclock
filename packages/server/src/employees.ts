@@ -36,6 +36,11 @@ export interface EmployeeRow {
   supervisorName: string | null;
   /** From app_user; null when they have no login at all. */
   role: string | null;
+  /** The login itself. Null when they have none — which is what makes a role
+   * change impossible for that person until they are invited. */
+  appUserId: string | null;
+  /** Whether a human set that role, or the Odoo org chart did. */
+  roleSource: string | null;
   appState: EmployeeAppState;
   /** ISO, or null if they have never clocked anything. */
   lastClockAt: string | null;
@@ -75,6 +80,8 @@ export async function listEmployees(
     crew_name: string | null;
     supervisor_name: string | null;
     role: string | null;
+    app_user_id: string | null;
+    role_source: string | null;
     has_login: boolean;
     last_clock_at: Date | string | null;
     days_recent: string;
@@ -86,6 +93,8 @@ export async function listEmployees(
               where cm.employee_id = e.id limit 1) as crew_name,
             sup.full_name as supervisor_name,
             u.role::text as role,
+            u.id as app_user_id,
+            u.role_source,
             (u.id is not null) as has_login,
             (select max(ae.device_time) from attendance_event ae
               where ae.employee_id = e.id and ae.voided_at is null) as last_clock_at,
@@ -114,6 +123,8 @@ export async function listEmployees(
       crewName: r.crew_name,
       supervisorName: r.supervisor_name,
       role: r.role,
+      appUserId: r.app_user_id,
+      roleSource: r.role_source,
       appState: !r.has_login ? 'no_login' : lastClockAt ? 'active' : 'never_clocked',
       lastClockAt,
       daysWorkedRecently: Number(r.days_recent),

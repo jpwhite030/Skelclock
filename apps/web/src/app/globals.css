@@ -1014,6 +1014,33 @@ a.site-row-name:hover { color: var(--cad-magenta); border-bottom-color: var(--ca
 .site-fact dt { color: var(--faint); }
 .site-fact dd { margin: 0; color: var(--bone); }
 
+/* A role is edited in place, so the row has to grow to hold a select, a
+   reason and two buttons without the table clipping them — which is what
+   `.sheet td` does to everything by default. */
+.role-cell { display: inline-flex; align-items: baseline; gap: var(--r-8); }
+.role-edit {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--r-8);
+  white-space: normal;
+}
+.role-edit select, .role-edit input {
+  background: var(--canvas); border: 1px solid var(--line-strong); color: var(--bone);
+  font: 500 12px var(--font-mono); padding: 3px 6px; min-height: 26px;
+}
+/* The reason ends up in the audit log and gets read back months later, so it
+   has to be wide enough to check before it is committed. */
+.role-edit input { min-width: 30ch; flex: 1 1 30ch; }
+.role-edit select:focus-visible, .role-edit input:focus-visible {
+  border-color: var(--cad-yellow); outline: none;
+}
+/* The cell being edited stops clipping; every other cell still does. */
+.sheet td:has(.role-edit) { white-space: normal; overflow: visible; }
+
+.role-sync {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--r-8);
+  margin: var(--r-2) 0; padding: var(--r-8);
+  border-left: 2px solid var(--line-strong);
+}
+
 /* Employee tabs reuse the site chip: same control, same job — a filter that
    states its own count. Anchors rather than buttons, so the tab is a real URL
    the office can bookmark or send to someone. */
