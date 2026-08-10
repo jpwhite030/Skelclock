@@ -19,3 +19,8 @@ skills-lock.json
 # Regenerate with: cd apps/mobile && npx expo prebuild --platform ios
 apps/mobile/ios/
 apps/mobile/android/
+.vercel
+.env*
+
+# Vercel CLI link + pulled env. Never committed — .env.local carries secrets.
+.vercel
