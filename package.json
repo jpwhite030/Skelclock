@@ -9,7 +9,8 @@
   ],
   "scripts": {
     "poc": "node --import tsx scripts/poc.ts",
-    "test": "node --import tsx --test packages/core/src/core.test.ts packages/odoo/src/odoo.test.ts apps/mobile/src/queue.test.ts scripts/integration.test.ts",
+    "test": "npm run rls:check && node --import tsx --test packages/core/src/core.test.ts packages/odoo/src/odoo.test.ts apps/mobile/src/queue.test.ts scripts/integration.test.ts",
+    "rls:check": "node --import tsx scripts/rls-check.ts",
     "test:unit": "node --import tsx --test packages/core/src/core.test.ts packages/odoo/src/odoo.test.ts apps/mobile/src/queue.test.ts",
     "odoo:probe": "node --import tsx scripts/odoo-probe.ts",
     "db:migrate": "node --import tsx scripts/apply-migrations.ts",
