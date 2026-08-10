@@ -64,6 +64,13 @@ export interface ClockEventInput {
   /** True when the button was pressed with no connectivity. */
   wasOffline: boolean;
   deviceId?: string | null;
+  /**
+   * Auto-geofence only: when the phone first saw itself inside this fence,
+   * ISO 8601 on the device clock. Compared against `deviceTime` — both are
+   * device times, so an event that sat in the offline queue for six hours is
+   * not credited with six hours of standing on site.
+   */
+  insideSince?: string | null;
   /** Set by supervisor/crew flows; null when the worker acted for themselves. */
   actingUserId?: string | null;
   /**

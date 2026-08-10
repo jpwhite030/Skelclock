@@ -59,6 +59,19 @@ import {
   type PushSender,
 } from '@skelclock/server';
 
+/**
+ * The settings these tests do not care about. updateCompanySettings is a full
+ * replace by design — it makes a caller decide about every field rather than
+ * silently resetting one — so the fields under test are spread over these.
+ */
+const OTHER_SETTINGS = {
+  geofenceMinDwellMinutes: 0,
+  payrollPeriod: 'weekly' as const,
+  payrollWeekStartsOn: 1,
+  payrollAnchorDate: null,
+};
+
+
 import { createLocalDb, seedFixture, type Fixture } from './local-db.js';
 
 // --- harness ----------------------------------------------------------------
@@ -1739,6 +1752,11 @@ test('Phase 3: a confident, unambiguous auto-geofence clock-in lands live, no ta
           eventType: 'clock_in',
           deviceTime: '2026-08-04T06:00:00Z',
           clockMethod: 'auto_geofence',
+          // Arrived a quarter of an hour before the phone raised this, so the
+          // company's five-minute minimum is comfortably served. Without it
+          // the event cannot prove anyone stayed and drops to tap-to-confirm,
+          // which is the case the next test covers.
+          insideSince: '2026-08-04T05:45:00Z',
         }),
       ],
     });
@@ -1767,6 +1785,88 @@ test('Phase 3: a confident, unambiguous auto-geofence clock-in lands live, no ta
       employeeId: fx.employeeId,
     });
     assert.equal(suggestions.length, 0);
+  } finally {
+    await close();
+  }
+});
+
+test('Phase 3: an arrival that has not stayed long enough asks for a tap', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    const result = await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [
+        clockEvent(fx, {
+          eventType: 'clock_in',
+          deviceTime: '2026-08-04T06:00:00Z',
+          clockMethod: 'auto_geofence',
+          // Ninety seconds inside the fence. That is the highway, or the
+          // servo next door — not someone starting a shift.
+          insideSince: '2026-08-04T05:58:30Z',
+        }),
+      ],
+    });
+
+    const outcome = result.outcomes[0]!;
+    assert.equal(outcome.status, 'created');
+    assert.equal(outcome.status === 'created' && outcome.autoConfirmed, false);
+
+    // Refused the automatic path, not the clock: it is waiting for a tap.
+    const suggestions = await listPendingSuggestions(db, {
+      companyId: fx.companyId,
+      employeeId: fx.employeeId,
+    });
+    assert.equal(suggestions.length, 1);
+  } finally {
+    await close();
+  }
+});
+
+test('Phase 3: a client that reports no arrival time falls back to a tap', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    // An older build, or a manual queue entry. We cannot judge dwell, and the
+    // doctrine everywhere in geo.ts is that unjudged means a human decides.
+    const result = await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [
+        clockEvent(fx, {
+          eventType: 'clock_in',
+          deviceTime: '2026-08-04T06:00:00Z',
+          clockMethod: 'auto_geofence',
+        }),
+      ],
+    });
+
+    const outcome = result.outcomes[0]!;
+    assert.equal(outcome.status === 'created' && outcome.autoConfirmed, false);
+  } finally {
+    await close();
+  }
+});
+
+test('Phase 3: a company with the dwell rule off is unchanged by it', async () => {
+  const { db, fx, close } = await freshDb();
+  try {
+    await db.query('update company set geofence_min_dwell_minutes = 0 where id = $1', [
+      fx.companyId,
+    ]);
+
+    const result = await ingestEvents(db, {
+      companyId: fx.companyId,
+      now: NOW,
+      events: [
+        clockEvent(fx, {
+          eventType: 'clock_in',
+          deviceTime: '2026-08-04T06:00:00Z',
+          clockMethod: 'auto_geofence',
+        }),
+      ],
+    });
+
+    assert.equal(result.outcomes[0]!.status === 'created' && result.outcomes[0]!.autoConfirmed, true);
   } finally {
     await close();
   }
@@ -1936,6 +2036,7 @@ test('a clock-in outside operating hours is refused', async () => {
   const { db, fx, close } = await freshDb();
   try {
     await updateCompanySettings(db, {
+      ...OTHER_SETTINGS,
       companyId: fx.companyId,
       autoLunchEnabled: false,
       autoLunchThresholdMinutes: 300,
@@ -1973,6 +2074,7 @@ test('a clock-in inside operating hours is accepted', async () => {
   const { db, fx, close } = await freshDb();
   try {
     await updateCompanySettings(db, {
+      ...OTHER_SETTINGS,
       companyId: fx.companyId,
       autoLunchEnabled: false,
       autoLunchThresholdMinutes: 300,
@@ -1999,6 +2101,7 @@ test('operating hours never block a clock-out, even after hours', async () => {
   const { db, fx, close } = await freshDb();
   try {
     await updateCompanySettings(db, {
+      ...OTHER_SETTINGS,
       companyId: fx.companyId,
       autoLunchEnabled: false,
       autoLunchThresholdMinutes: 300,
@@ -2032,6 +2135,7 @@ test('a site override wins over the company default operating hours', async () =
   const { db, fx, close } = await freshDb();
   try {
     await updateCompanySettings(db, {
+      ...OTHER_SETTINGS,
       companyId: fx.companyId,
       autoLunchEnabled: false,
       autoLunchThresholdMinutes: 300,
@@ -2066,6 +2170,7 @@ test('an overnight operating window wraps past midnight correctly', async () => 
   try {
     // A site that only runs overnight: 22:00-06:00.
     await updateCompanySettings(db, {
+      ...OTHER_SETTINGS,
       companyId: fx.companyId,
       autoLunchEnabled: false,
       autoLunchThresholdMinutes: 300,
@@ -2105,6 +2210,7 @@ test('a supervisor filling in a missed clock-in bypasses operating hours', async
   const { db, fx, close } = await freshDb();
   try {
     await updateCompanySettings(db, {
+      ...OTHER_SETTINGS,
       companyId: fx.companyId,
       autoLunchEnabled: false,
       autoLunchThresholdMinutes: 300,
@@ -2194,12 +2300,21 @@ test('removing an exclusion lets the employee clock in again', async () => {
 
     const row = await one<{ id: string }>(
       db,
-      'select id from employee_site_exclusion where employee_id = $1 and site_id = $2',
+      `select id from employee_site_exclusion
+        where employee_id = $1 and site_id = $2 and removed_at is null`,
       [fx.employeeId, fx.siteId],
     );
     await removeSiteExclusion(db, { companyId: fx.companyId, exclusionId: row!.id });
 
     assert.equal(await isEmployeeExcludedFromSite(db, { employeeId: fx.employeeId, siteId: fx.siteId }), false);
+
+    // Lifting a lockout is history, not an erasure: the row stays, stamped.
+    const lifted = await one<{ removed_at: Date | null }>(
+      db,
+      'select removed_at from employee_site_exclusion where id = $1',
+      [row!.id],
+    );
+    assert.ok(lifted?.removed_at, 'the exclusion row should survive, marked removed');
 
     const result = await ingestEvents(db, {
       companyId: fx.companyId,
@@ -2338,6 +2453,7 @@ test('auto-lunch, enabled company-wide, reduces the worker home screen\'s paid h
   const { db, fx, close } = await freshDb();
   try {
     await updateCompanySettings(db, {
+      ...OTHER_SETTINGS,
       companyId: fx.companyId,
       autoLunchEnabled: true,
       autoLunchThresholdMinutes: 300,
@@ -2379,6 +2495,7 @@ test('travel allocation, set to first_site, reaches the worker home screen throu
     assert.equal(settings.travelAllocation, 'unallocated'); // default, unchanged behaviour
 
     await updateCompanySettings(db, {
+      ...OTHER_SETTINGS,
       companyId: fx.companyId,
       autoLunchEnabled: false,
       autoLunchThresholdMinutes: 300,

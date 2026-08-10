@@ -114,7 +114,7 @@ export async function listSiteExclusions(
        from employee_site_exclusion x
        join employee e on e.id = x.employee_id
        join site s on s.id = x.site_id
-      where x.company_id = $1
+      where x.company_id = $1 and x.removed_at is null
       order by e.full_name, s.name`,
     [args.companyId],
   );
@@ -144,22 +144,39 @@ export async function addSiteExclusion(
     throw new SiteError('A reason is required to exclude an employee from a site.');
   }
   await db.query(
+    // The arbiter has to name the index's own WHERE clause. Uniqueness applies
+    // to live exclusions only (migration 0008), so that predicate is part of
+    // the index's identity and Postgres cannot infer it without being told.
     `insert into employee_site_exclusion (company_id, employee_id, site_id, reason, created_by)
      values ($1,$2,$3,$4,$5)
-     on conflict (employee_id, site_id)
+     on conflict (employee_id, site_id) where removed_at is null
      do update set reason = excluded.reason, created_by = excluded.created_by, created_at = now()`,
     [args.companyId, args.employeeId, args.siteId, args.reason, args.createdBy],
   );
 }
 
+/**
+ * Lift a lockout.
+ *
+ * Marked removed rather than deleted. "We banned them from this site, then we
+ * un-banned them" is exactly the sort of thing that gets argued about months
+ * later, and the row is the only record that it happened — a DELETE here threw
+ * away the reason, who set it, and when, leaving nothing to show the decision
+ * was ever made.
+ *
+ * Already-removed rows are left alone, so a double click does not rewrite the
+ * date the lockout was actually lifted.
+ */
 export async function removeSiteExclusion(
   db: Db,
-  args: { companyId: string; exclusionId: string },
+  args: { companyId: string; exclusionId: string; removedBy?: string | null },
 ): Promise<void> {
-  await db.query('delete from employee_site_exclusion where id = $1 and company_id = $2', [
-    args.exclusionId,
-    args.companyId,
-  ]);
+  await db.query(
+    `update employee_site_exclusion
+        set removed_at = now(), removed_by = $3
+      where id = $1 and company_id = $2 and removed_at is null`,
+    [args.exclusionId, args.companyId, args.removedBy ?? null],
+  );
 }
 
 /** Used by ingest.ts before a clock is ever written, and by /api/jobs to
@@ -170,7 +187,8 @@ export async function isEmployeeExcludedFromSite(
 ): Promise<boolean> {
   const row = await one<{ id: string }>(
     db,
-    'select id from employee_site_exclusion where employee_id = $1 and site_id = $2',
+    `select id from employee_site_exclusion
+      where employee_id = $1 and site_id = $2 and removed_at is null`,
     [args.employeeId, args.siteId],
   );
   return row != null;

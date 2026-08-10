@@ -126,7 +126,11 @@ export async function removeExclusion(exclusionId: string): Promise<SaveLocation
   const access = await requireSiteEditor();
   if (!access.ok) return access.result;
 
-  await removeSiteExclusion(db, { companyId: access.companyId, exclusionId });
+  await removeSiteExclusion(db, {
+    companyId: access.companyId,
+    exclusionId,
+    removedBy: access.appUserId,
+  });
   revalidatePath('/sites');
   return { ok: true, message: 'Removed.' };
 }

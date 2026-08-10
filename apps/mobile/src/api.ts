@@ -143,6 +143,7 @@ export class ApiClient implements Transport {
           wasOffline: e.wasOffline,
           deviceId: e.deviceId,
           candidateJobIds: e.candidateJobIds,
+          insideSince: e.insideSince ?? null,
         })),
       }),
     });

@@ -40,6 +40,10 @@ export interface QueuedEvent {
   deviceId: string;
   /** Auto-geofence only: every assigned job whose fence the fix fell inside. */
   candidateJobIds?: string[] | null;
+  /** Auto-geofence only: when the phone first saw itself inside this fence.
+   * The server compares it against deviceTime to decide whether the worker
+   * stayed long enough for the arrival to be trusted without a tap. */
+  insideSince?: string | null;
   status: QueueItemStatus;
   attempts: number;
   lastError: string | null;

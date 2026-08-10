@@ -10,6 +10,10 @@ export const jobSchema = z.object({
   latitude: z.number().nullable(),
   longitude: z.number().nullable(),
   geofenceRadiusM: z.number(),
+  /** Company policy, resolved here for the same reason operating hours are:
+   * the phone has to give the same answer the server would. Minutes a worker
+   * must stay inside the fence before an automatic arrival is trusted. */
+  geofenceMinDwellMinutes: z.number(),
   /**
    * Already resolved server-side: the site's own override when it has one,
    * else the company default, else null for no restriction. "HH:MM:SS",

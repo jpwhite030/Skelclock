@@ -48,6 +48,7 @@ import {
   isAutoDetectEnabled,
   refreshWatchedJobsIfEnabled,
   setAutoDetectEnabled,
+  settlePendingArrivals,
   type PermissionHealth,
 } from './geofence';
 import { EventQueue, type QueuedEvent } from './queue';
@@ -234,6 +235,11 @@ export function useClock(employeeId: string | null) {
         // when it gets events accepted, and two refreshes racing is what put
         // the clock state on a see-saw.
         void (async () => {
+          // Before the sync, not after: an arrival held while the app was
+          // closed becomes a real clock event here, and the sync that follows
+          // is what carries it up. The other way round leaves it sitting in
+          // the queue until something else happens to trigger a flush.
+          await settlePendingArrivals().catch(() => undefined);
           await sync();
           await refresh();
         })();

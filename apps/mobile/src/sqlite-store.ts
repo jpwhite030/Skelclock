@@ -37,6 +37,18 @@ const SCHEMA = `
   create index if not exists event_queue_status_idx on event_queue (status, device_time);
 `;
 
+/**
+ * Columns added after the first release.
+ *
+ * `create table if not exists` does nothing to a table that already exists, so
+ * an app updating in place keeps the old shape and every insert naming a new
+ * column fails. SQLite has no `add column if not exists`, and the error for
+ * re-adding one is harmless — so each is attempted and its complaint ignored.
+ * That is the whole migration story this queue needs: it is a spool, not a
+ * database, and rows live in it for minutes.
+ */
+const ADDED_COLUMNS = ['alter table event_queue add column inside_since text'];
+
 interface Row {
   idempotency_key: string;
   employee_id: string;
@@ -55,9 +67,11 @@ interface Row {
   attempts: number;
   last_error: string | null;
   queued_at: number;
+  inside_since: string | null;
 }
 
 const toEvent = (r: Row): QueuedEvent => ({
+  insideSince: r.inside_since ?? null,
   idempotencyKey: r.idempotency_key,
   employeeId: r.employee_id,
   eventType: r.event_type as QueuedEvent['eventType'],
@@ -85,6 +99,11 @@ export class SqliteQueueStore implements QueueStore {
     // WAL keeps a read during a flush from blocking the next button press.
     await db.execAsync('pragma journal_mode = WAL;');
     await db.execAsync(SCHEMA);
+    for (const statement of ADDED_COLUMNS) {
+      // Already there on a fresh install and on the second launch after an
+      // update — see the note on ADDED_COLUMNS.
+      await db.execAsync(statement).catch(() => undefined);
+    }
     return new SqliteQueueStore(db);
   }
 
@@ -95,8 +114,9 @@ export class SqliteQueueStore implements QueueStore {
       `insert or ignore into event_queue (
          idempotency_key, employee_id, event_type, device_time, job_id,
          work_activity_id, latitude, longitude, gps_accuracy_m, outside_reason,
-         clock_method, was_offline, device_id, status, attempts, last_error, queued_at
-       ) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         clock_method, was_offline, device_id, status, attempts, last_error, queued_at,
+         inside_since
+       ) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         event.idempotencyKey,
         event.employeeId,
@@ -115,6 +135,7 @@ export class SqliteQueueStore implements QueueStore {
         event.attempts,
         event.lastError,
         event.queuedAt,
+        event.insideSince ?? null,
       ],
     );
   }

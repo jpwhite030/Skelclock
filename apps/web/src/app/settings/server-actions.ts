@@ -9,7 +9,12 @@
 
 import { revalidatePath } from 'next/cache';
 
-import { SettingsError, updateCompanySettings, type TravelAllocation } from '@skelclock/server';
+import {
+  SettingsError,
+  updateCompanySettings,
+  type PayrollPeriodKind,
+  type TravelAllocation,
+} from '@skelclock/server';
 
 import { db } from '../../lib/db';
 import { getDashboardSession } from '../../lib/session';
@@ -26,6 +31,10 @@ export async function savePayrollSettings(args: {
   travelAllocation: TravelAllocation;
   operatingHoursStart: string | null;
   operatingHoursEnd: string | null;
+  geofenceMinDwellMinutes: number;
+  payrollPeriod: PayrollPeriodKind;
+  payrollWeekStartsOn: number;
+  payrollAnchorDate: string | null;
 }): Promise<ActionResult> {
   const session = await getDashboardSession();
   if (!session || session.role !== 'admin') {
